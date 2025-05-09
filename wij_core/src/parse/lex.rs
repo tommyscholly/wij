@@ -16,6 +16,12 @@ pub enum Keyword {
     Let,
     Int,
     Fn,
+    Type,
+    If,
+    Else,
+    Match,
+    For,
+    In,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -26,6 +32,12 @@ impl TryFrom<&str> for Keyword {
             "let" => Ok(Keyword::Let),
             "int" => Ok(Keyword::Int),
             "fn" => Ok(Keyword::Fn),
+            "type" => Ok(Keyword::Type),
+            "if" => Ok(Keyword::If),
+            "else" => Ok(Keyword::Else),
+            "match" => Ok(Keyword::Match),
+            "for" => Ok(Keyword::For),
+            "in" => Ok(Keyword::In),
             _ => Err(()),
         }
     }
@@ -46,6 +58,7 @@ pub enum Token {
     Comma,
     SemiColon,
     Colon,
+    Arrow,
 }
 
 macro_rules! advance_single_token {
@@ -105,6 +118,14 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                 }
                 ',' => {
                     advance_single_token!(self, Token::Comma)
+                }
+                '-' => {
+                    self.chars.next();
+                    if self.chars.peek() == Some(&'>') {
+                        advance_single_token!(self, Token::Arrow)
+                    } else {
+                        return Err(LexError::UnexpectedChar('-'));
+                    }
                 }
                 ' ' | '\t' | '\n' => {
                     self.chars.next();
@@ -248,6 +269,47 @@ mod tests {
             (Token::RParen, 22..23),
             (Token::LBrace, 24..25),
             (Token::RBrace, 25..26),
+        ];
+        assert_eq!(tokens.len(), expected.len());
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn test_for() {
+        let src = "for i in a {}";
+        let lexer = tokenize(src);
+        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+
+        let expected = vec![
+            (Token::Keyword(Keyword::For), 0..3),
+            (Token::Identifier("i".to_string()), 4..5),
+            (Token::Keyword(Keyword::In), 6..8),
+            (Token::Identifier("a".to_string()), 9..10),
+            (Token::LBrace, 11..12),
+            (Token::RBrace, 12..13),
+        ];
+        assert_eq!(tokens.len(), expected.len());
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn test_match() {
+        let src = "match a { 1 -> 2, 2 -> 3 }";
+        let lexer = tokenize(src);
+        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+
+        let expected = vec![
+            (Token::Keyword(Keyword::Match), 0..5),
+            (Token::Identifier("a".to_string()), 6..7),
+            (Token::LBrace, 8..9),
+            (Token::Int(1), 10..11),
+            (Token::Arrow, 12..13),
+            (Token::Int(2), 14..15),
+            (Token::Comma, 15..16),
+            (Token::Int(2), 17..18),
+            (Token::Arrow, 19..20),
+            (Token::Int(3), 21..22),
+            (Token::RBrace, 23..24),
         ];
         assert_eq!(tokens.len(), expected.len());
         assert_eq!(tokens, expected);

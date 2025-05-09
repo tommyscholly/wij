@@ -2,6 +2,7 @@ use crate::parse::{Token, lex::Keyword};
 
 use super::{ParseError, ParseErrorKind, Parseable, Parser, Spanned};
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Type {
     Int,
 }
