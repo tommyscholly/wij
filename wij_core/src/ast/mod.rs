@@ -319,16 +319,13 @@ impl Parser {
 }
 
 impl Iterator for Parser {
-    type Item = Spanned<Declaration>;
+    type Item = ParseResult<Spanned<Declaration>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.tokens.is_empty() {
             None
         } else {
-            match Declaration::parse(self) {
-                Ok(statement) => Some(statement),
-                Err(err) => panic!("Parser error: {:?}", err),
-            }
+            Some(Declaration::parse(self))
         }
     }
 }
@@ -356,7 +353,9 @@ mod tests {
         let toks = lexer.collect();
         let parser = Parser::new(toks);
 
-        let decls = parser.collect::<Vec<Spanned<Declaration>>>();
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
         let expected = vec![(
             Declaration::Function {
                 name: "main".to_string(),
@@ -379,7 +378,9 @@ mod tests {
         let toks = lexer.collect();
         let parser = Parser::new(toks);
 
-        let decls = parser.collect::<Vec<Spanned<Declaration>>>();
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
         let expected = vec![(
             Declaration::Function {
                 name: "main".to_string(),

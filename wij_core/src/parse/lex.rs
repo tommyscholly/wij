@@ -22,6 +22,7 @@ pub enum Keyword {
     Match,
     For,
     In,
+    Return,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -38,6 +39,7 @@ impl TryFrom<&str> for Keyword {
             "match" => Ok(Keyword::Match),
             "for" => Ok(Keyword::For),
             "in" => Ok(Keyword::In),
+            "return" => Ok(Keyword::Return),
             _ => Err(()),
         }
     }
@@ -127,7 +129,7 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                         return Err(LexError::UnexpectedChar('-'));
                     }
                 }
-                ' ' | '\t' | '\n' => {
+                ' ' | '\t' | '\n' | '\r' => {
                     self.chars.next();
                     self.start += 1;
                     self.current += 1;
@@ -195,7 +197,8 @@ impl<T: Iterator<Item = LexItem>> Iterator for Lexer<T> {
         if self.chars.peek().is_none() {
             None
         } else {
-            match self.next_token() {
+            let tok = self.next_token();
+            match tok {
                 Ok(token) => Some(token),
                 Err(err) => panic!("Lexer error: {:?}", err),
             }
