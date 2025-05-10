@@ -1,16 +1,45 @@
 use std::iter::Peekable;
 
+use crate::AstError;
 use crate::ast::BinOp;
+use crate::ast::Span;
 use crate::ast::Spanned;
 
 type LexItem = char;
 
 #[derive(Debug)]
-pub enum LexError {
+pub enum LexErrorKind {
     UnexpectedChar(LexItem),
     UnexpectedKeyword(String),
     UnexpectedEOF,
 }
+
+#[derive(Debug)]
+pub struct LexError {
+    kind: LexErrorKind,
+    span: Span,
+}
+
+impl LexError {
+    pub fn new(kind: LexErrorKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+impl AstError for LexError {
+    fn span(&self) -> Option<Span> {
+        Some(self.span.clone())
+    }
+    fn reason(&self) -> &str {
+        match &self.kind {
+            LexErrorKind::UnexpectedChar(_) => "Unexpected character",
+            LexErrorKind::UnexpectedKeyword(_) => "Unexpected keyword",
+            LexErrorKind::UnexpectedEOF => "Unexpected end of input",
+        }
+    }
+}
+
+pub type LexResult<T> = Result<T, LexError>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Keyword {
@@ -117,7 +146,17 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
         while let Some(c) = self.chars.peek() {
             match c {
                 '=' => {
-                    advance_single_token!(self, Token::Eq)
+                    self.chars.next();
+                    self.current += 1;
+                    if self.chars.peek() == Some(&'=') {
+                        self.chars.next();
+                        self.current += 1;
+                        advance_single_token!(self, Token::BinOp(BinOp::EqEq))
+                    } else {
+                        let span = self.start..self.current;
+                        self.start = self.current;
+                        return Ok((Token::Eq, span));
+                    }
                 }
                 ';' => {
                     advance_single_token!(self, Token::SemiColon)
@@ -155,7 +194,9 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                     if self.chars.peek() == Some(&'>') {
                         advance_single_token!(self, Token::Arrow)
                     } else {
-                        return Ok((Token::BinOp(BinOp::Sub), self.start..self.current));
+                        let span = self.start..self.current;
+                        self.start = self.current;
+                        return Ok((Token::BinOp(BinOp::Sub), span));
                     }
                 }
                 ' ' | '\t' | '\n' | '\r' => {
@@ -173,13 +214,23 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                         self.start = self.current;
                         return token;
                     } else {
-                        return Err(LexError::UnexpectedChar(*c));
+                        if let Ok(op) = BinOp::try_from(c.to_string().as_str()) {
+                            advance_single_token!(self, Token::BinOp(op))
+                        }
+
+                        return Err(LexError::new(
+                            LexErrorKind::UnexpectedChar(*c),
+                            self.start..self.current,
+                        ));
                     }
                 }
             }
         }
 
-        Err(LexError::UnexpectedEOF)
+        Err(LexError::new(
+            LexErrorKind::UnexpectedEOF,
+            self.current..self.current,
+        ))
     }
 
     fn next_number(&mut self) -> Result<Spanned<Token>, LexError> {
@@ -223,7 +274,7 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
 }
 
 impl<T: Iterator<Item = LexItem>> Iterator for Lexer<T> {
-    type Item = Spanned<Token>;
+    type Item = LexResult<Spanned<Token>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chars.peek().is_none() {
@@ -231,8 +282,8 @@ impl<T: Iterator<Item = LexItem>> Iterator for Lexer<T> {
         } else {
             let tok = self.next_token();
             match tok {
-                Ok(token) => Some(token),
-                Err(err) => panic!("Lexer error: {:?}", err),
+                Ok(token) => Some(Ok(token)),
+                Err(err) => Some(Err(err)),
             }
         }
     }
@@ -251,7 +302,7 @@ mod tests {
     fn test_let() {
         let src = "let a: int = 1;";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::Let), 0..3),
@@ -270,7 +321,7 @@ mod tests {
     fn test_fn() {
         let src = "fn main() {}";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::Fn), 0..2),
@@ -288,7 +339,7 @@ mod tests {
     fn test_fn_with_params() {
         let src = "fn main(a: int, b: int) {}";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::Fn), 0..2),
@@ -313,7 +364,7 @@ mod tests {
     fn test_for() {
         let src = "for i in a {}";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::For), 0..3),
@@ -331,7 +382,7 @@ mod tests {
     fn test_match() {
         let src = "match a { 1 -> 2, 2 -> 3 }";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::Match), 0..5),
@@ -354,7 +405,7 @@ mod tests {
     fn test_type_enum() {
         let src = "type Color = Red | Green | Blue";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::Type), 0..4),
@@ -374,7 +425,7 @@ mod tests {
     fn test_type_struct() {
         let src = "type Point = { x: int, y: int }";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::Type), 0..4),
@@ -398,7 +449,7 @@ mod tests {
     fn test_if() {
         let src = "if a or c { b } else { d }";
         let lexer = tokenize(src);
-        let tokens = lexer.collect::<Vec<Spanned<Token>>>();
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<Spanned<Token>>>();
 
         let expected = vec![
             (Token::Keyword(Keyword::If), 0..2),

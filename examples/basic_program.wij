@@ -1,0 +1,15 @@
+type Color = Red | Green | Blue;
+
+fn fib(n: int) -> int {
+    if n == 0 or n == 1 {
+        return n;
+    } else {
+        return fib(n - 1) + fib(n - 2);
+    }
+}
+
+fn main() {
+    let x: int = 5;
+    let y: int = fib(x);
+    print(y);
+}

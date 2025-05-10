@@ -1,12 +1,23 @@
 mod types;
 
-use crate::parse::{Token, lex::Keyword};
+use crate::{
+    AstError,
+    parse::{Token, lex::Keyword},
+};
 use types::Type;
 
 use std::collections::VecDeque;
 
 pub type Span = std::ops::Range<usize>;
 pub type Spanned<T> = (T, Span);
+
+pub fn span<T>(spanned: Spanned<T>) -> Span {
+    spanned.1.clone()
+}
+
+pub fn t<T>(spanned: Spanned<T>) -> T {
+    spanned.0
+}
 
 #[derive(Debug)]
 pub enum ParseErrorKind {
@@ -51,6 +62,17 @@ impl ParseError {
         }
     }
 }
+
+impl AstError for ParseError {
+    fn span(&self) -> Option<Span> {
+        self.span.clone()
+    }
+
+    fn reason(&self) -> &str {
+        self.reason.as_deref().unwrap_or("")
+    }
+}
+
 pub type ParseResult<T> = Result<T, ParseError>;
 
 pub trait Parseable
@@ -157,6 +179,7 @@ impl Parseable for Statement {
             Some((Token::Keyword(Keyword::If), if_start)) => {
                 parser.pop_next();
                 let cond = Expression::parse(parser)?;
+                println!("cond: {cond:?}");
                 let then_block = if let Some((Token::LBrace, _)) = parser.peek_next() {
                     Box::new(Statement::parse(parser)?)
                 } else {
@@ -255,6 +278,19 @@ pub enum BinOp {
     LtEq,
 }
 
+impl BinOp {
+    fn precedence(&self) -> u8 {
+        match self {
+            BinOp::Or => 1,
+            BinOp::And => 2,
+            BinOp::EqEq | BinOp::NEq => 3,
+            BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => 4,
+            BinOp::Add | BinOp::Sub => 5,
+            BinOp::Mul | BinOp::Div => 6,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expression {
     Int(i32),
@@ -268,10 +304,8 @@ impl Expression {
     fn is_fn_call(&self) -> bool {
         matches!(self, Expression::FnCall(_, _))
     }
-}
 
-impl Parseable for Expression {
-    fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
+    fn parse_primary(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
         match parser.pop_next() {
             Some((Token::Int(i), span)) => Ok((Expression::Int(i), span)),
             // Some((Token::String(s), span)) => Ok((Expression::String(s), span)),
@@ -279,34 +313,145 @@ impl Parseable for Expression {
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
                     let mut args = Vec::new();
+
+                    if let Some((Token::RParen, end_span)) = parser.peek_next() {
+                        parser.pop_next();
+                        let full_span = span.start..end_span.end;
+                        return Ok((Expression::FnCall(ident, args), full_span));
+                    }
+
                     loop {
                         let arg = Expression::parse(parser)?;
+                        let arg_span = arg.1.clone();
                         args.push(arg);
-                        if let Some((Token::Comma, _)) = parser.peek_next() {
-                            parser.pop_next();
-                        } else if let Some((Token::RParen, _)) = parser.peek_next() {
-                            break;
+
+                        match parser.peek_next() {
+                            Some((Token::Comma, _)) => {
+                                parser.pop_next();
+                            }
+                            Some((Token::RParen, _)) => {
+                                break;
+                            }
+                            _ => {
+                                return Err(ParseError::with_reason(
+                                    ParseErrorKind::MalformedExpression,
+                                    arg_span,
+                                    "Expected ',' or ')' in function arguments",
+                                ));
+                            }
                         }
                     }
 
-                    let rparen = parser.expect_next(Token::RParen)?;
-                    let span = span.start..rparen.1.end;
-                    Ok((Expression::FnCall(ident, args), span))
+                    let (_, rparen_span) = parser.expect_next(Token::RParen)?;
+                    let full_span = span.start..rparen_span.end;
+                    Ok((Expression::FnCall(ident, args), full_span))
                 }
                 _ => Ok((Expression::Ident(ident), span)),
             },
-            Some(t) => {
-                let span = t.1;
-                Err(ParseError::with_reason(
-                    ParseErrorKind::MalformedExpression,
-                    span,
-                    &format!("Expected expression, got {:?}", t.0),
-                ))
+            Some((Token::LParen, lparen_span)) => {
+                // handle parenthesized expressions
+                let expr = Expression::parse(parser)?;
+                let (_, rparen_span) = parser.expect_next(Token::RParen)?;
+                let full_span = lparen_span.start..rparen_span.end;
+                Ok((expr.0, full_span)) // Return the inner expression with updated span
             }
+            Some((token, span)) => Err(ParseError::with_reason(
+                ParseErrorKind::MalformedExpression,
+                span,
+                &format!("Expected expression, got {:?}", token),
+            )),
             None => Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
         }
     }
+
+    // parse bin ops using precedence climbing
+    fn parse_binary_op_rhs(
+        parser: &mut Parser,
+        mut lhs: Spanned<Self>,
+        min_precedence: u8,
+    ) -> ParseResult<Spanned<Self>> {
+        // look ahead for binops
+        while let Some((Token::BinOp(op), op_span)) = parser.peek_next() {
+            let op_precedence = op.precedence();
+
+            // only handle this operator if it has high enough precedence
+            if op_precedence < min_precedence {
+                break;
+            }
+
+            if parser.pop_next().is_none() {
+                return Err(ParseError::new(ParseErrorKind::EndOfInput, op_span));
+            }
+
+            let mut rhs = Self::parse_primary(parser)?;
+
+            while let Some((Token::BinOp(next_op), _)) = parser.peek_next() {
+                let next_precedence = next_op.precedence();
+
+                // if the next operator has higher precedence, we need to recursively parse it first
+                if next_precedence > op_precedence {
+                    rhs = Self::parse_binary_op_rhs(parser, rhs, next_precedence)?;
+                    continue;
+                }
+                break;
+            }
+
+            let full_span = lhs.1.start..rhs.1.end;
+            lhs = (
+                Expression::BinOp(op, Box::new(lhs), Box::new(rhs)),
+                full_span,
+            );
+            continue;
+        }
+
+        Ok(lhs)
+    }
 }
+
+impl Parseable for Expression {
+    fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
+        let lhs = Self::parse_primary(parser)?;
+        Self::parse_binary_op_rhs(parser, lhs, 0)
+    }
+}
+
+// impl Parseable for Expression {
+//     fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
+//         match parser.pop_next() {
+//             Some((Token::Int(i), span)) => Ok((Expression::Int(i), span)),
+//             // Some((Token::String(s), span)) => Ok((Expression::String(s), span)),
+//             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
+//                 Some((Token::LParen, _)) => {
+//                     parser.pop_next();
+//                     let mut args = Vec::new();
+//                     loop {
+//                         let arg = Expression::parse(parser)?;
+//                         args.push(arg);
+//                         if let Some((Token::Comma, _)) = parser.peek_next() {
+//                             parser.pop_next();
+//                         } else if let Some((Token::RParen, _)) = parser.peek_next() {
+//                             break;
+//                         }
+//                     }
+//
+//                     let rparen = parser.expect_next(Token::RParen)?;
+//                     let span = span.start..rparen.1.end;
+//                     Ok((Expression::FnCall(ident, args), span))
+//                 }
+//                 _ => Ok((Expression::Ident(ident), span)),
+//             },
+//             Some(t) => {
+//                 let span = t.1;
+//                 Err(ParseError::with_reason(
+//                     ParseErrorKind::MalformedExpression,
+//                     span,
+//                     &format!("Expected expression, got {:?}", t.0),
+//                 ))
+//             }
+//             None => Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
+//         }
+//     }
+// }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Declaration {
@@ -358,6 +503,7 @@ impl Parseable for Declaration {
                 let _lparen = parser.expect_next(Token::LParen)?;
                 let arguments = parse_args(parser, Token::RParen)?;
                 let ret_type = if let Some((Token::Arrow, _)) = parser.peek_next() {
+                    parser.pop_next();
                     Some(Type::parse(parser)?.0)
                 } else {
                     None
@@ -555,24 +701,13 @@ impl Iterator for Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // #[test]
-    // fn test_parser() {
-    //     let src = "let a: int = 1;";
-    //     let lexer = crate::parse::lex::tokenize(src);
-    //     let toks = lexer.collect();
-    //     println!("Toks: {:?}", toks);
-    //     let parser = Parser::new(toks);
-    //
-    //     let statements: Vec<Spanned<Statement>> = parser.into_iter().collect();
-    //     assert_eq!(statements.len(), 1);
-    // }
+    use crate::tokenize;
 
     #[test]
     fn test_parse_fn() {
         let src = "fn main() {}";
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -596,8 +731,8 @@ mod tests {
         let src = "fn main(a: int, b: int) {
             let c: int = 1;
         }";
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -643,8 +778,8 @@ mod tests {
     #[test]
     fn test_return_fn() {
         let src = "fn main() {return 1;}";
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -669,8 +804,8 @@ mod tests {
     #[test]
     fn test_if_else() {
         let src = "fn main() { if a { return 1; } else { return 2; }}";
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -713,8 +848,8 @@ mod tests {
     #[test]
     fn test_type_enum() {
         let src = "type Test = Red;";
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -735,8 +870,8 @@ mod tests {
     fn test_type_record() {
         let src = "type Test = { a: int, b: int }";
 
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -771,8 +906,8 @@ mod tests {
     #[test]
     fn test_fn_call() {
         let src = "fn main() { let a: int = add(1, 2); }";
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -809,8 +944,8 @@ mod tests {
     #[test]
     fn test_fn_call_as_stmt() {
         let src = "fn main() { add(1, 2); }";
-        let lexer = crate::parse::lex::tokenize(src);
-        let toks = lexer.collect();
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
         let parser = Parser::new(toks);
 
         let decls = parser
@@ -836,5 +971,73 @@ mod tests {
         )];
         assert_eq!(decls.len(), expected.len());
         assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_bin_op_precedence() {
+        let src = "fn main() { return 1 + 2 * 3; }";
+        let lexer = tokenize(src);
+        let toks = lexer.map(|t| t.unwrap()).collect();
+        let parser = Parser::new(toks);
+
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
+        let expected = vec![(
+            Declaration::Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: Statement::Block(vec![(
+                    Statement::Return(Some((
+                        Expression::BinOp(
+                            BinOp::Add,
+                            Box::new((Expression::Int(1), 19..20)),
+                            Box::new((
+                                Expression::BinOp(
+                                    BinOp::Mul,
+                                    Box::new((Expression::Int(2), 23..24)),
+                                    Box::new((Expression::Int(3), 27..28)),
+                                ),
+                                23..28,
+                            )),
+                        ),
+                        19..28,
+                    ))),
+                    12..28,
+                )]),
+                ret_type: None,
+            },
+            0..28,
+        )];
+        assert_eq!(decls.len(), expected.len());
+        assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_expr_prec() {
+        let src = "n == 0 or n == 1";
+        let tokens = tokenize(src).map(|t| t.unwrap()).collect();
+        let mut parser = Parser::new(tokens);
+        let (expr, _) = Expression::parse(&mut parser).unwrap();
+        let expected = Expression::BinOp(
+            BinOp::Or,
+            Box::new((
+                Expression::BinOp(
+                    BinOp::EqEq,
+                    Box::new((Expression::Ident("n".to_string()), 0..1)),
+                    Box::new((Expression::Int(0), 5..6)),
+                ),
+                0..6,
+            )),
+            Box::new((
+                Expression::BinOp(
+                    BinOp::EqEq,
+                    Box::new((Expression::Ident("n".to_string()), 10..11)),
+                    Box::new((Expression::Int(1), 15..16)),
+                ),
+                10..16,
+            )),
+        );
+        assert_eq!(expr, expected);
     }
 }
