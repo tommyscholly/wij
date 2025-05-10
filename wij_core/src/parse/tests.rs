@@ -170,3 +170,14 @@ fn test_if() {
     assert_eq!(tokens.len(), expected.len());
     assert_eq!(tokens, expected);
 }
+
+#[test]
+fn test_string() {
+    let src = "\"hello\"";
+    let lexer = tokenize(src);
+    let tokens = lexer.map(Result::unwrap).collect::<Vec<Spanned<Token>>>();
+
+    let expected = vec![(Token::String("hello".to_string()), 0..7)];
+    assert_eq!(tokens.len(), expected.len());
+    assert_eq!(tokens, expected);
+}

@@ -13,10 +13,12 @@ use std::collections::VecDeque;
 pub type Span = std::ops::Range<usize>;
 pub type Spanned<T> = (T, Span);
 
+#[allow(dead_code)]
 pub fn span<T>(spanned: Spanned<T>) -> Span {
     spanned.1.clone()
 }
 
+#[allow(dead_code)]
 pub fn t<T>(spanned: Spanned<T>) -> T {
     spanned.0
 }
@@ -108,6 +110,26 @@ impl Parseable for Var {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Literal {
+    Int(i32),
+    String(String),
+    Bool(bool),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Pat {
+    Literal(Literal),
+    TypeConstructor(String),
+    Any(Option<String>), // corresponds to assigning any value to the variable, or _ if none
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct MatchCase {
+    pub pat: Pat,
+    pub body: Spanned<Statement>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Statement {
     Let {
         var: Var,
@@ -119,6 +141,10 @@ pub enum Statement {
         condition: Spanned<Expression>,
         then_block: Box<Spanned<Statement>>,
         else_block: Option<Box<Spanned<Statement>>>,
+    },
+    Match {
+        value: Spanned<Expression>,
+        cases: Vec<Spanned<MatchCase>>,
     },
     Expression(Box<Spanned<Expression>>), // a subclass of expressions being executed for side effects
 }
@@ -276,8 +302,10 @@ impl BinOp {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expression {
-    Int(i32),
-    String(String),
+    // Int(i32),
+    // Bool(bool),
+    // String(String),
+    Literal(Literal),
     Ident(String),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     FnCall(String, Vec<Spanned<Expression>>),
@@ -289,8 +317,15 @@ impl Expression {
     }
 
     fn parse_primary(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
+        use Literal::*;
         match parser.pop_next() {
-            Some((Token::Int(i), span)) => Ok((Expression::Int(i), span)),
+            Some((Token::Int(i), span)) => Ok((Expression::Literal(Int(i)), span)),
+            Some((Token::Keyword(Keyword::True), span)) => {
+                Ok((Expression::Literal(Bool(true)), span))
+            }
+            Some((Token::Keyword(Keyword::False), span)) => {
+                Ok((Expression::Literal(Bool(false)), span))
+            }
             // Some((Token::String(s), span)) => Ok((Expression::String(s), span)),
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
                 Some((Token::LParen, _)) => {
@@ -645,6 +680,7 @@ impl Parser {
         }
     }
 
+    #[allow(dead_code)]
     fn take_until(&mut self, until_tok: Token) -> ParseResult<Vec<Spanned<Token>>> {
         let mut tokens = Vec::new();
         while let Some(t) = self.pop_next() {

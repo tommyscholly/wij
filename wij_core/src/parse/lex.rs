@@ -55,6 +55,9 @@ pub enum Keyword {
     For,
     In,
     Return,
+    True,
+    False,
+    Bool,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -72,6 +75,9 @@ impl TryFrom<&str> for Keyword {
             "for" => Ok(Keyword::For),
             "in" => Ok(Keyword::In),
             "return" => Ok(Keyword::Return),
+            "true" => Ok(Keyword::True),
+            "false" => Ok(Keyword::False),
+            "bool" => Ok(Keyword::Bool),
             _ => Err(()),
         }
     }
@@ -82,6 +88,7 @@ pub enum Token {
     Int(i32),
     Keyword(Keyword),
     Identifier(String),
+    String(String),
     BinOp(BinOp),
     Eq,
     LParen,
@@ -190,6 +197,35 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                 }
                 '-' => {
                     handle_operator!(self, '-', '>', Token::BinOp(BinOp::Sub), Token::Arrow)
+                }
+                '"' => {
+                    self.chars.next();
+                    self.current += 1;
+                    let mut string = String::new();
+                    loop {
+                        match self.chars.peek() {
+                            Some('"') => {
+                                self.chars.next();
+                                self.current += 1;
+                                break;
+                            }
+                            Some(c) => {
+                                string.push(*c);
+                                self.chars.next();
+                                self.current += 1;
+                            }
+                            None => {
+                                return Err(LexError::new(
+                                    LexErrorKind::UnexpectedEOF,
+                                    self.current..self.current,
+                                ));
+                            }
+                        }
+                    }
+
+                    let span = self.start..self.current;
+                    self.start = self.current;
+                    return Ok((Token::String(string), span));
                 }
                 ' ' | '\t' | '\n' | '\r' => {
                     self.chars.next();

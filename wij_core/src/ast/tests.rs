@@ -1,3 +1,4 @@
+use super::Literal::*;
 use super::*;
 use crate::tokenize;
 
@@ -61,7 +62,7 @@ fn test_parse_fn_with_params_and_body() {
                         name: "c".to_string(),
                         ty: Type::Int,
                     },
-                    value: Some((Expression::Int(1), 51..52)),
+                    value: Some((Expression::Literal(Int(1)), 51..52)),
                 },
                 42..52,
             )]),
@@ -88,7 +89,7 @@ fn test_return_fn() {
             name: "main".to_string(),
             arguments: vec![],
             body: Statement::Block(vec![(
-                Statement::Return(Some((Expression::Int(1), 18..19))),
+                Statement::Return(Some((Expression::Literal(Int(1)), 18..19))),
                 11..19,
             )]),
             ret_type: None,
@@ -119,14 +120,14 @@ fn test_if_else() {
                     condition: (Expression::Ident("a".to_string()), 15..16),
                     then_block: Box::new((
                         Statement::Block(vec![(
-                            Statement::Return(Some((Expression::Int(1), 26..27))),
+                            Statement::Return(Some((Expression::Literal(Int(1)), 26..27))),
                             19..27,
                         )]),
                         17..27,
                     )),
                     else_block: Some(Box::new((
                         Statement::Block(vec![(
-                            Statement::Return(Some((Expression::Int(2), 45..46))),
+                            Statement::Return(Some((Expression::Literal(Int(2)), 45..46))),
                             38..46,
                         )]),
                         36..46,
@@ -224,7 +225,10 @@ fn test_fn_call() {
                     value: Some((
                         Expression::FnCall(
                             "add".to_string(),
-                            vec![(Expression::Int(1), 29..30), (Expression::Int(2), 32..33)],
+                            vec![
+                                (Expression::Literal(Int(1)), 29..30),
+                                (Expression::Literal(Int(2)), 32..33),
+                            ],
                         ),
                         25..34,
                     )),
@@ -257,7 +261,10 @@ fn test_fn_call_as_stmt() {
                 Statement::Expression(Box::new((
                     Expression::FnCall(
                         "add".to_string(),
-                        vec![(Expression::Int(1), 16..17), (Expression::Int(2), 19..20)],
+                        vec![
+                            (Expression::Literal(Int(1)), 16..17),
+                            (Expression::Literal(Int(2)), 19..20),
+                        ],
                     ),
                     12..21,
                 ))),
@@ -289,12 +296,12 @@ fn test_bin_op_precedence() {
                 Statement::Return(Some((
                     Expression::BinOp(
                         BinOp::Add,
-                        Box::new((Expression::Int(1), 19..20)),
+                        Box::new((Expression::Literal(Int(1)), 19..20)),
                         Box::new((
                             Expression::BinOp(
                                 BinOp::Mul,
-                                Box::new((Expression::Int(2), 23..24)),
-                                Box::new((Expression::Int(3), 27..28)),
+                                Box::new((Expression::Literal(Int(2)), 23..24)),
+                                Box::new((Expression::Literal(Int(3)), 27..28)),
                             ),
                             23..28,
                         )),
@@ -323,7 +330,7 @@ fn test_expr_prec() {
             Expression::BinOp(
                 BinOp::EqEq,
                 Box::new((Expression::Ident("n".to_string()), 0..1)),
-                Box::new((Expression::Int(0), 5..6)),
+                Box::new((Expression::Literal(Int(0)), 5..6)),
             ),
             0..6,
         )),
@@ -331,10 +338,36 @@ fn test_expr_prec() {
             Expression::BinOp(
                 BinOp::EqEq,
                 Box::new((Expression::Ident("n".to_string()), 10..11)),
-                Box::new((Expression::Int(1), 15..16)),
+                Box::new((Expression::Literal(Int(1)), 15..16)),
             ),
             10..16,
         )),
     );
     assert_eq!(expr, expected);
+}
+
+#[test]
+fn test_bool_fn() {
+    let src = "fn test() -> bool { return true; }";
+    let lexer = tokenize(src);
+    let toks = lexer.map(Result::unwrap).collect();
+    let parser = Parser::new(toks);
+
+    let decls = parser
+        .map(Result::unwrap)
+        .collect::<Vec<Spanned<Declaration>>>();
+    let expected = vec![(
+        Declaration::Function {
+            name: "test".to_string(),
+            arguments: vec![],
+            body: Statement::Block(vec![(
+                Statement::Return(Some((Expression::Literal(Bool(true)), 27..31))),
+                20..31,
+            )]),
+            ret_type: Some(Type::Bool),
+        },
+        0..31,
+    )];
+    assert_eq!(decls.len(), expected.len());
+    assert_eq!(decls, expected);
 }
