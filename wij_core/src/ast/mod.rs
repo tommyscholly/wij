@@ -74,7 +74,7 @@ impl Parseable for Var {
             return Err(ParseError::with_reason(
                 ParseErrorKind::MalformedVariable,
                 span,
-                "Expected colon",
+                "Expected type",
             ));
         };
         let (ty, ty_span) = Type::parse(parser)?;
@@ -96,6 +96,7 @@ pub enum Statement {
         then_block: Box<Spanned<Statement>>,
         else_block: Option<Box<Spanned<Statement>>>,
     },
+    Expression(Box<Spanned<Expression>>), // a subclass of expressions being executed for side effects
 }
 
 impl Statement {
@@ -217,12 +218,19 @@ impl Parseable for Statement {
                 Ok((Statement::Block(stmts), block_span))
             }
             Some(t) => {
-                let span = t.1;
-                Err(ParseError::with_reason(
-                    ParseErrorKind::MalformedExpression,
-                    span,
-                    &format!("Expected statement, got {:?}", t.0),
-                ))
+                let expr = Expression::parse(parser)?;
+                if expr.0.is_fn_call() {
+                    let _ = parser.expect_next(Token::SemiColon)?;
+                    let expr_span = expr.1.clone();
+                    Ok((Statement::Expression(Box::new(expr)), expr_span))
+                } else {
+                    let span = t.1;
+                    Err(ParseError::with_reason(
+                        ParseErrorKind::MalformedExpression,
+                        span,
+                        &format!("Expected statement, got {:?}", t.0),
+                    ))
+                }
             }
 
             None => Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
@@ -253,6 +261,13 @@ pub enum Expression {
     String(String),
     Ident(String),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
+    FnCall(String, Vec<Spanned<Expression>>),
+}
+
+impl Expression {
+    fn is_fn_call(&self) -> bool {
+        matches!(self, Expression::FnCall(_, _))
+    }
 }
 
 impl Parseable for Expression {
@@ -260,13 +275,32 @@ impl Parseable for Expression {
         match parser.pop_next() {
             Some((Token::Int(i), span)) => Ok((Expression::Int(i), span)),
             // Some((Token::String(s), span)) => Ok((Expression::String(s), span)),
-            Some((Token::Identifier(ident), span)) => Ok((Expression::Ident(ident), span)),
+            Some((Token::Identifier(ident), span)) => match parser.peek_next() {
+                Some((Token::LParen, _)) => {
+                    parser.pop_next();
+                    let mut args = Vec::new();
+                    loop {
+                        let arg = Expression::parse(parser)?;
+                        args.push(arg);
+                        if let Some((Token::Comma, _)) = parser.peek_next() {
+                            parser.pop_next();
+                        } else if let Some((Token::RParen, _)) = parser.peek_next() {
+                            break;
+                        }
+                    }
+
+                    let rparen = parser.expect_next(Token::RParen)?;
+                    let span = span.start..rparen.1.end;
+                    Ok((Expression::FnCall(ident, args), span))
+                }
+                _ => Ok((Expression::Ident(ident), span)),
+            },
             Some(t) => {
                 let span = t.1;
                 Err(ParseError::with_reason(
                     ParseErrorKind::MalformedExpression,
                     span,
-                    "Expected expression",
+                    &format!("Expected expression, got {:?}", t.0),
                 ))
             }
             None => Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
@@ -729,6 +763,76 @@ mod tests {
                 ],
             },
             0..28,
+        )];
+        assert_eq!(decls.len(), expected.len());
+        assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_fn_call() {
+        let src = "fn main() { let a: int = add(1, 2); }";
+        let lexer = crate::parse::lex::tokenize(src);
+        let toks = lexer.collect();
+        let parser = Parser::new(toks);
+
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
+        let expected = vec![(
+            Declaration::Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: Statement::Block(vec![(
+                    Statement::Let {
+                        var: Var {
+                            name: "a".to_string(),
+                            ty: Type::Int,
+                        },
+                        value: Some((
+                            Expression::FnCall(
+                                "add".to_string(),
+                                vec![(Expression::Int(1), 29..30), (Expression::Int(2), 32..33)],
+                            ),
+                            25..34,
+                        )),
+                    },
+                    16..34,
+                )]),
+                ret_type: None,
+            },
+            0..34,
+        )];
+        assert_eq!(decls.len(), expected.len());
+        assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_fn_call_as_stmt() {
+        let src = "fn main() { add(1, 2); }";
+        let lexer = crate::parse::lex::tokenize(src);
+        let toks = lexer.collect();
+        let parser = Parser::new(toks);
+
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
+        let expected = vec![(
+            Declaration::Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: Statement::Block(vec![(
+                    Statement::Expression(Box::new((
+                        Expression::FnCall(
+                            "add".to_string(),
+                            vec![(Expression::Int(1), 16..17), (Expression::Int(2), 19..20)],
+                        ),
+                        12..21,
+                    ))),
+                    12..21,
+                )]),
+                ret_type: None,
+            },
+            0..21,
         )];
         assert_eq!(decls.len(), expected.len());
         assert_eq!(decls, expected);
