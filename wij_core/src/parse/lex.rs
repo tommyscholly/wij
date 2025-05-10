@@ -127,6 +127,27 @@ macro_rules! advance_single_token {
     }};
 }
 
+macro_rules! handle_operator {
+    ($self:expr, $first_char:expr, $second_char:expr, 
+     $single_token:expr, $double_token:expr) => {{
+        $self.chars.next(); 
+        $self.current += 1;
+        
+        if $self.chars.peek() == Some(&$second_char) {
+            $self.chars.next(); 
+            $self.current += 1;
+            
+            let span = $self.start..$self.current;
+            $self.start = $self.current;
+            return Ok(($double_token, span));
+        } else {
+            let span = $self.start..$self.current;
+            $self.start = $self.current;
+            return Ok(($single_token, span));
+        }
+    }};
+}
+
 pub struct Lexer<T: Iterator<Item = LexItem>> {
     chars: Peekable<T>,
     start: usize,
@@ -145,19 +166,6 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
     fn next_token(&mut self) -> Result<Spanned<Token>, LexError> {
         while let Some(c) = self.chars.peek() {
             match c {
-                '=' => {
-                    self.chars.next();
-                    self.current += 1;
-                    if self.chars.peek() == Some(&'=') {
-                        self.chars.next();
-                        self.current += 1;
-                        advance_single_token!(self, Token::BinOp(BinOp::EqEq))
-                    } else {
-                        let span = self.start..self.current;
-                        self.start = self.current;
-                        return Ok((Token::Eq, span));
-                    }
-                }
                 ';' => {
                     advance_single_token!(self, Token::SemiColon)
                 }
@@ -188,16 +196,17 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                 '|' => {
                     advance_single_token!(self, Token::Bar)
                 }
+                '=' => {
+                    handle_operator!(self, '=', '=', Token::Eq, Token::BinOp(BinOp::EqEq))
+                }
+                '>' => {
+                    handle_operator!(self, '>', '=', Token::BinOp(BinOp::Gt), Token::BinOp(BinOp::GtEq))
+                }
+                '<' => {
+                    handle_operator!(self, '<', '=', Token::BinOp(BinOp::Lt), Token::BinOp(BinOp::LtEq))
+                }
                 '-' => {
-                    self.chars.next();
-                    self.current += 1;
-                    if self.chars.peek() == Some(&'>') {
-                        advance_single_token!(self, Token::Arrow)
-                    } else {
-                        let span = self.start..self.current;
-                        self.start = self.current;
-                        return Ok((Token::BinOp(BinOp::Sub), span));
-                    }
+                    handle_operator!(self, '-', '>', Token::BinOp(BinOp::Sub), Token::Arrow)
                 }
                 ' ' | '\t' | '\n' | '\r' => {
                     self.chars.next();
