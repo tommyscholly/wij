@@ -88,7 +88,19 @@ pub enum Statement {
         var: Var,
         value: Option<Spanned<Expression>>,
     },
+    Return(Option<Spanned<Expression>>),
     Block(Vec<Spanned<Statement>>),
+    If {
+        condition: Spanned<Expression>,
+        then_block: Vec<Spanned<Statement>>,
+        else_block: Option<Vec<Spanned<Statement>>>,
+    },
+}
+
+impl Statement {
+    fn is_block(&self) -> bool {
+        matches!(self, Statement::Block(_))
+    }
 }
 
 macro_rules! match_optional_token {
@@ -123,6 +135,23 @@ impl Parseable for Statement {
 
                 Ok((Statement::Let { var, value }, span))
             }
+            Some((Token::Keyword(Keyword::Return), span_start)) => {
+                parser.pop_next();
+                if let Some((Token::SemiColon, _)) = parser.peek_next() {
+                    Ok((
+                        Statement::Return(None),
+                        span_start.start..span_start.end + 1,
+                    ))
+                } else {
+                    let (expr, expr_span) = Expression::parse(parser)?;
+                    let _ = parser.expect_next(Token::SemiColon)?;
+                    let expr_end = expr_span.end;
+                    Ok((
+                        Statement::Return(Some((expr, expr_span))),
+                        span_start.start..expr_end,
+                    ))
+                }
+            }
             Some((Token::LBrace, span)) => {
                 parser.pop_next();
 
@@ -155,10 +184,28 @@ impl Parseable for Statement {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+
+    And,
+    Or,
+    EqEq,
+    NEq,
+    Gt,
+    GtEq,
+    Lt,
+    LtEq,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expression {
     Int(i32),
     String(String),
+    BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
 }
 
 impl Parseable for Expression {
@@ -186,6 +233,14 @@ pub enum Declaration {
         arguments: Vec<Var>,
         body: Statement,
         ret_type: Option<Type>,
+    },
+    Record {
+        name: String,
+        fields: Vec<Var>,
+    },
+    Enum {
+        name: String,
+        variants: Vec<String>,
     },
 }
 
@@ -407,6 +462,32 @@ mod tests {
                 ret_type: None,
             },
             0..52,
+        )];
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_return_fn() {
+        let src = "fn main() {return 1;}";
+        let lexer = crate::parse::lex::tokenize(src);
+        let toks = lexer.collect();
+        let parser = Parser::new(toks);
+
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
+        let expected = vec![(
+            Declaration::Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: Statement::Block(vec![(
+                    Statement::Return(Some((Expression::Int(1), 18..19))),
+                    11..19,
+                )]),
+                ret_type: None,
+            },
+            0..19,
         )];
         assert_eq!(decls.len(), 1);
         assert_eq!(decls, expected);
