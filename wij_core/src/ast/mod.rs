@@ -16,6 +16,7 @@ pub enum ParseErrorKind {
     MalformedLet,
     ExpectedSemiColon,
     EndOfInput,
+    TypeNameCapitalized,
 }
 
 #[derive(Debug)]
@@ -92,8 +93,8 @@ pub enum Statement {
     Block(Vec<Spanned<Statement>>),
     If {
         condition: Spanned<Expression>,
-        then_block: Vec<Spanned<Statement>>,
-        else_block: Option<Vec<Spanned<Statement>>>,
+        then_block: Box<Spanned<Statement>>,
+        else_block: Option<Box<Spanned<Statement>>>,
     },
 }
 
@@ -152,6 +153,51 @@ impl Parseable for Statement {
                     ))
                 }
             }
+            Some((Token::Keyword(Keyword::If), if_start)) => {
+                parser.pop_next();
+                let cond = Expression::parse(parser)?;
+                let then_block = if let Some((Token::LBrace, _)) = parser.peek_next() {
+                    Box::new(Statement::parse(parser)?)
+                } else {
+                    return Err(ParseError::with_reason(
+                        ParseErrorKind::MalformedExpression,
+                        if_start,
+                        "Expected then block",
+                    ));
+                };
+
+                if let Some((Token::Keyword(Keyword::Else), _)) = parser.peek_next() {
+                    parser.pop_next();
+                    let else_block = if let Some((Token::LBrace, _)) = parser.peek_next() {
+                        Some(Box::new(Statement::parse(parser)?))
+                    } else {
+                        return Err(ParseError::with_reason(
+                            ParseErrorKind::MalformedExpression,
+                            if_start,
+                            "Expected else block",
+                        ));
+                    };
+                    let if_span = if_start.start..else_block.as_ref().unwrap().1.end;
+                    Ok((
+                        Statement::If {
+                            condition: cond,
+                            then_block,
+                            else_block,
+                        },
+                        if_span,
+                    ))
+                } else {
+                    let if_span = if_start.start..then_block.1.end;
+                    Ok((
+                        Statement::If {
+                            condition: cond,
+                            then_block,
+                            else_block: None,
+                        },
+                        if_span,
+                    ))
+                }
+            }
             Some((Token::LBrace, span)) => {
                 parser.pop_next();
 
@@ -205,6 +251,7 @@ pub enum BinOp {
 pub enum Expression {
     Int(i32),
     String(String),
+    Ident(String),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
 }
 
@@ -213,6 +260,7 @@ impl Parseable for Expression {
         match parser.pop_next() {
             Some((Token::Int(i), span)) => Ok((Expression::Int(i), span)),
             // Some((Token::String(s), span)) => Ok((Expression::String(s), span)),
+            Some((Token::Identifier(ident), span)) => Ok((Expression::Ident(ident), span)),
             Some(t) => {
                 let span = t.1;
                 Err(ParseError::with_reason(
@@ -230,33 +278,37 @@ impl Parseable for Expression {
 pub enum Declaration {
     Function {
         name: String,
-        arguments: Vec<Var>,
+        arguments: Vec<Spanned<Var>>,
         body: Statement,
         ret_type: Option<Type>,
     },
     Record {
         name: String,
-        fields: Vec<Var>,
+        fields: Vec<Spanned<Var>>,
     },
     Enum {
         name: String,
-        variants: Vec<String>,
+        variants: Vec<Spanned<String>>,
     },
 }
 
-fn parse_fn_args(parser: &mut Parser) -> ParseResult<Vec<Var>> {
+fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned<Var>>> {
     let mut vars = Vec::new();
     while parser.peek_next().is_some() {
-        if let Some((Token::RParen, _)) = parser.peek_next() {
-            parser.pop_next();
-            break;
+        if let Some((lt, _)) = parser.peek_next() {
+            if lt == last_token {
+                parser.pop_next();
+                break;
+            }
         }
-        vars.push(Var::parse(parser)?.0);
+        vars.push(Var::parse(parser)?);
         if let Some((Token::Comma, _)) = parser.peek_next() {
             parser.pop_next();
-        } else if let Some((Token::RParen, _)) = parser.peek_next() {
-            parser.pop_next();
-            break;
+        } else if let Some((lt, _)) = parser.peek_next() {
+            if lt == last_token {
+                parser.pop_next();
+                break;
+            }
         }
     }
 
@@ -265,26 +317,107 @@ fn parse_fn_args(parser: &mut Parser) -> ParseResult<Vec<Var>> {
 
 impl Parseable for Declaration {
     fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
-        let start_span = parser.expect_kw_kind(Keyword::Fn)?;
-        let (name, _) = parser.expect_ident()?;
-        let _lparen = parser.expect_next(Token::LParen)?;
-        let arguments = parse_fn_args(parser)?;
-        let ret_type = if let Some((Token::Arrow, _)) = parser.peek_next() {
-            Some(Type::parse(parser)?.0)
-        } else {
-            None
-        };
-        let (body, body_span) = Statement::parse(parser)?;
-        let span = start_span.start..body_span.end;
-        Ok((
-            Declaration::Function {
-                name,
-                arguments,
-                body,
-                ret_type,
-            },
-            span,
-        ))
+        match parser.peek_next() {
+            Some((Token::Keyword(Keyword::Fn), _)) => {
+                let start_span = parser.expect_kw_kind(Keyword::Fn)?;
+                let (name, _) = parser.expect_ident()?;
+                let _lparen = parser.expect_next(Token::LParen)?;
+                let arguments = parse_args(parser, Token::RParen)?;
+                let ret_type = if let Some((Token::Arrow, _)) = parser.peek_next() {
+                    Some(Type::parse(parser)?.0)
+                } else {
+                    None
+                };
+                let (body, body_span) = Statement::parse(parser)?;
+                let span = start_span.start..body_span.end;
+                Ok((
+                    Declaration::Function {
+                        name,
+                        arguments,
+                        body,
+                        ret_type,
+                    },
+                    span,
+                ))
+            }
+            Some((Token::Keyword(Keyword::Type), ty_span_start)) => {
+                let _start_span = parser.expect_kw_kind(Keyword::Type)?;
+                let (type_name, type_span) = parser.expect_ident()?;
+                if !type_name.chars().next().unwrap().is_uppercase() {
+                    return Err(ParseError::with_reason(
+                        ParseErrorKind::TypeNameCapitalized,
+                        type_span,
+                        "Type name must start with an uppercase letter",
+                    ));
+                }
+
+                let _eq = parser.expect_next(Token::Eq)?;
+                match parser.peek_next() {
+                    Some((Token::LBrace, _)) => {
+                        // Record
+                        parser.pop_next();
+                        let fields = parse_args(parser, Token::RBrace)?;
+                        let span = ty_span_start.start..fields.last().unwrap().1.end;
+                        Ok((
+                            Declaration::Record {
+                                name: type_name,
+                                fields,
+                            },
+                            span,
+                        ))
+                    }
+                    Some(_) => {
+                        // Enum (probably)
+                        let mut variants = Vec::new();
+                        loop {
+                            let (variant_name, variant_span) = parser.expect_ident()?;
+                            match parser.peek_next() {
+                                Some((Token::Bar, _)) => {
+                                    variants.push((variant_name, variant_span));
+                                    parser.pop_next();
+                                }
+                                Some((Token::SemiColon, _)) => {
+                                    variants.push((variant_name, variant_span));
+                                    parser.pop_next();
+                                    break;
+                                }
+                                Some((Token::LBrace, _)) => {
+                                    // Record
+                                    unimplemented!()
+                                    // let fields = parse_args(parser, Token::RBrace)?;
+                                    // variants.push((variant_name, fields));
+                                    // break;
+                                }
+                                Some((t, span)) => {
+                                    return Err(ParseError::with_reason(
+                                        ParseErrorKind::MalformedExpression,
+                                        span,
+                                        &format!("Expected semicolon or bar, got {:?}", t),
+                                    ));
+                                }
+                                None => {
+                                    return Err(ParseError::new(
+                                        ParseErrorKind::EndOfInput,
+                                        variant_span.end..variant_span.end,
+                                    ));
+                                }
+                            }
+                        }
+
+                        let type_span = ty_span_start.start..variants.last().unwrap().1.end;
+                        Ok((
+                            Declaration::Enum {
+                                name: type_name,
+                                variants,
+                            },
+                            type_span,
+                        ))
+                    }
+                    None => Err(ParseError::new(ParseErrorKind::EndOfInput, ty_span_start)),
+                }
+            }
+            _ => Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
+        }
     }
 }
 
@@ -440,14 +573,20 @@ mod tests {
             Declaration::Function {
                 name: "main".to_string(),
                 arguments: vec![
-                    Var {
-                        name: "a".to_string(),
-                        ty: Type::Int,
-                    },
-                    Var {
-                        name: "b".to_string(),
-                        ty: Type::Int,
-                    },
+                    (
+                        Var {
+                            name: "a".to_string(),
+                            ty: Type::Int,
+                        },
+                        8..14,
+                    ),
+                    (
+                        Var {
+                            name: "b".to_string(),
+                            ty: Type::Int,
+                        },
+                        16..22,
+                    ),
                 ],
                 body: Statement::Block(vec![(
                     Statement::Let {
@@ -489,7 +628,109 @@ mod tests {
             },
             0..19,
         )];
-        assert_eq!(decls.len(), 1);
+        assert_eq!(decls.len(), expected.len());
+        assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_if_else() {
+        let src = "fn main() { if a { return 1; } else { return 2; }}";
+        let lexer = crate::parse::lex::tokenize(src);
+        let toks = lexer.collect();
+        let parser = Parser::new(toks);
+
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
+
+        let expected = vec![(
+            Declaration::Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: Statement::Block(vec![(
+                    Statement::If {
+                        condition: (Expression::Ident("a".to_string()), 15..16),
+                        then_block: Box::new((
+                            Statement::Block(vec![(
+                                Statement::Return(Some((Expression::Int(1), 26..27))),
+                                19..27,
+                            )]),
+                            17..27,
+                        )),
+                        else_block: Some(Box::new((
+                            Statement::Block(vec![(
+                                Statement::Return(Some((Expression::Int(2), 45..46))),
+                                38..46,
+                            )]),
+                            36..46,
+                        ))),
+                    },
+                    12..46,
+                )]),
+                ret_type: None,
+            },
+            0..46,
+        )];
+
+        assert_eq!(decls.len(), expected.len());
+        assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_type_enum() {
+        let src = "type Test = Red;";
+        let lexer = crate::parse::lex::tokenize(src);
+        let toks = lexer.collect();
+        let parser = Parser::new(toks);
+
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
+        let expected = vec![(
+            Declaration::Enum {
+                name: "Test".to_string(),
+                variants: vec![("Red".to_string(), 12..15)],
+            },
+            0..15,
+        )];
+        assert_eq!(decls.len(), expected.len());
+        assert_eq!(decls, expected);
+    }
+
+    #[test]
+    fn test_type_record() {
+        let src = "type Test = { a: int, b: int }";
+
+        let lexer = crate::parse::lex::tokenize(src);
+        let toks = lexer.collect();
+        let parser = Parser::new(toks);
+
+        let decls = parser
+            .map(|r| r.unwrap())
+            .collect::<Vec<Spanned<Declaration>>>();
+        let expected = vec![(
+            Declaration::Record {
+                name: "Test".to_string(),
+                fields: vec![
+                    (
+                        Var {
+                            name: "a".to_string(),
+                            ty: Type::Int,
+                        },
+                        14..20,
+                    ),
+                    (
+                        Var {
+                            name: "b".to_string(),
+                            ty: Type::Int,
+                        },
+                        22..28,
+                    ),
+                ],
+            },
+            0..28,
+        )];
+        assert_eq!(decls.len(), expected.len());
         assert_eq!(decls, expected);
     }
 }
