@@ -1,15 +1,18 @@
 use crate::parse::{Token, lex::Keyword};
 
-use super::{ParseError, ParseErrorKind, Parseable, Parser, Spanned};
+use super::{ParseError, ParseErrorKind, Parseable, Parser, Spanned, typed::FunctionSignature};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Type {
     Int,
     Bool,
+    String,
     Array(Box<Type>, usize),
     Tuple(Vec<Type>),
-    Fn(Vec<Type>, Box<Type>),
+    Fn(Box<FunctionSignature>),
     UserDef(String),
+    Record(Vec<(String, Type)>),
+    Unit,
 }
 
 impl Parseable for Type {

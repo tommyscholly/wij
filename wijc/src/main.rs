@@ -3,7 +3,7 @@ use std::process::exit;
 use ariadne::{ColorGenerator, Label, Report, ReportKind, Source};
 use clap::Parser as Clap;
 
-use wij_core::{AstError, ParseError, Parser, tokenize};
+use wij_core::{AstError, Parser, tokenize};
 
 #[derive(Clap)]
 struct Options {

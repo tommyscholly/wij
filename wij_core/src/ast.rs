@@ -1,4 +1,5 @@
 mod macros;
+mod typed;
 mod types;
 
 use crate::{
@@ -132,7 +133,7 @@ pub struct MatchCase {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Statement {
     Let {
-        var: Var,
+        var: Spanned<Var>,
         value: Option<Spanned<Expression>>,
     },
     Return(Option<Spanned<Expression>>),
@@ -159,14 +160,20 @@ impl Parseable for Statement {
                 let span = if let Some((_, span)) = &value {
                     var_span.start..span.end
                 } else {
-                    var_span
+                    var_span.clone()
                 };
 
                 let Some((Token::SemiColon, _)) = parser.pop_next() else {
                     return Err(ParseError::new(ParseErrorKind::ExpectedSemiColon, span));
                 };
 
-                Ok((Statement::Let { var, value }, span))
+                Ok((
+                    Statement::Let {
+                        var: (var, var_span),
+                        value,
+                    },
+                    span,
+                ))
             }
             Some((Token::Keyword(Keyword::Return), span_start)) => {
                 parser.pop_next();
@@ -371,7 +378,7 @@ impl Expression {
                 let expr = Expression::parse(parser)?;
                 let (_, rparen_span) = parser.expect_next(Token::RParen)?;
                 let full_span = lparen_span.start..rparen_span.end;
-                Ok((expr.0, full_span)) // Return the inner expression with updated span
+                Ok((expr.0, full_span)) // return the inner expression with updated span
             }
             Some((token, span)) => Err(ParseError::with_reason(
                 ParseErrorKind::MalformedExpression,
@@ -433,50 +440,12 @@ impl Parseable for Expression {
     }
 }
 
-// impl Parseable for Expression {
-//     fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
-//         match parser.pop_next() {
-//             Some((Token::Int(i), span)) => Ok((Expression::Int(i), span)),
-//             // Some((Token::String(s), span)) => Ok((Expression::String(s), span)),
-//             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
-//                 Some((Token::LParen, _)) => {
-//                     parser.pop_next();
-//                     let mut args = Vec::new();
-//                     loop {
-//                         let arg = Expression::parse(parser)?;
-//                         args.push(arg);
-//                         if let Some((Token::Comma, _)) = parser.peek_next() {
-//                             parser.pop_next();
-//                         } else if let Some((Token::RParen, _)) = parser.peek_next() {
-//                             break;
-//                         }
-//                     }
-//
-//                     let rparen = parser.expect_next(Token::RParen)?;
-//                     let span = span.start..rparen.1.end;
-//                     Ok((Expression::FnCall(ident, args), span))
-//                 }
-//                 _ => Ok((Expression::Ident(ident), span)),
-//             },
-//             Some(t) => {
-//                 let span = t.1;
-//                 Err(ParseError::with_reason(
-//                     ParseErrorKind::MalformedExpression,
-//                     span,
-//                     &format!("Expected expression, got {:?}", t.0),
-//                 ))
-//             }
-//             None => Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
-//         }
-//     }
-// }
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Declaration {
     Function {
         name: String,
         arguments: Vec<Spanned<Var>>,
-        body: Statement,
+        body: Spanned<Statement>,
         ret_type: Option<Type>,
     },
     Record {
@@ -532,7 +501,7 @@ impl Parseable for Declaration {
                     Declaration::Function {
                         name,
                         arguments,
-                        body,
+                        body: (body, body_span),
                         ret_type,
                     },
                     span,

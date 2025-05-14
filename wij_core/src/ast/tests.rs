@@ -16,7 +16,7 @@ fn test_parse_fn() {
         Declaration::Function {
             name: "main".to_string(),
             arguments: vec![],
-            body: Statement::Block(vec![]),
+            body: (Statement::Block(vec![]), 10..11),
             ret_type: None,
         },
         0..11,
@@ -56,16 +56,22 @@ fn test_parse_fn_with_params_and_body() {
                     16..22,
                 ),
             ],
-            body: Statement::Block(vec![(
-                Statement::Let {
-                    var: Var {
-                        name: "c".to_string(),
-                        ty: Type::Int,
+            body: (
+                Statement::Block(vec![(
+                    Statement::Let {
+                        var: (
+                            Var {
+                                name: "c".to_string(),
+                                ty: Type::Int,
+                            },
+                            42..48,
+                        ),
+                        value: Some((Expression::Literal(Int(1)), 51..52)),
                     },
-                    value: Some((Expression::Literal(Int(1)), 51..52)),
-                },
-                42..52,
-            )]),
+                    42..52,
+                )]),
+                24..52,
+            ),
             ret_type: None,
         },
         0..52,
@@ -88,10 +94,13 @@ fn test_return_fn() {
         Declaration::Function {
             name: "main".to_string(),
             arguments: vec![],
-            body: Statement::Block(vec![(
-                Statement::Return(Some((Expression::Literal(Int(1)), 18..19))),
-                11..19,
-            )]),
+            body: (
+                Statement::Block(vec![(
+                    Statement::Return(Some((Expression::Literal(Int(1)), 18..19))),
+                    11..19,
+                )]),
+                10..19,
+            ),
             ret_type: None,
         },
         0..19,
@@ -115,26 +124,29 @@ fn test_if_else() {
         Declaration::Function {
             name: "main".to_string(),
             arguments: vec![],
-            body: Statement::Block(vec![(
-                Statement::If {
-                    condition: (Expression::Ident("a".to_string()), 15..16),
-                    then_block: Box::new((
-                        Statement::Block(vec![(
-                            Statement::Return(Some((Expression::Literal(Int(1)), 26..27))),
-                            19..27,
-                        )]),
-                        17..27,
-                    )),
-                    else_block: Some(Box::new((
-                        Statement::Block(vec![(
-                            Statement::Return(Some((Expression::Literal(Int(2)), 45..46))),
-                            38..46,
-                        )]),
-                        36..46,
-                    ))),
-                },
-                12..46,
-            )]),
+            body: (
+                Statement::Block(vec![(
+                    Statement::If {
+                        condition: (Expression::Ident("a".to_string()), 15..16),
+                        then_block: Box::new((
+                            Statement::Block(vec![(
+                                Statement::Return(Some((Expression::Literal(Int(1)), 26..27))),
+                                19..27,
+                            )]),
+                            17..27,
+                        )),
+                        else_block: Some(Box::new((
+                            Statement::Block(vec![(
+                                Statement::Return(Some((Expression::Literal(Int(2)), 45..46))),
+                                38..46,
+                            )]),
+                            36..46,
+                        ))),
+                    },
+                    12..46,
+                )]),
+                10..46,
+            ),
             ret_type: None,
         },
         0..46,
@@ -216,25 +228,31 @@ fn test_fn_call() {
         Declaration::Function {
             name: "main".to_string(),
             arguments: vec![],
-            body: Statement::Block(vec![(
-                Statement::Let {
-                    var: Var {
-                        name: "a".to_string(),
-                        ty: Type::Int,
-                    },
-                    value: Some((
-                        Expression::FnCall(
-                            "add".to_string(),
-                            vec![
-                                (Expression::Literal(Int(1)), 29..30),
-                                (Expression::Literal(Int(2)), 32..33),
-                            ],
+            body: (
+                Statement::Block(vec![(
+                    Statement::Let {
+                        var: (
+                            Var {
+                                name: "a".to_string(),
+                                ty: Type::Int,
+                            },
+                            16..22,
                         ),
-                        25..34,
-                    )),
-                },
-                16..34,
-            )]),
+                        value: Some((
+                            Expression::FnCall(
+                                "add".to_string(),
+                                vec![
+                                    (Expression::Literal(Int(1)), 29..30),
+                                    (Expression::Literal(Int(2)), 32..33),
+                                ],
+                            ),
+                            25..34,
+                        )),
+                    },
+                    16..34,
+                )]),
+                10..34,
+            ),
             ret_type: None,
         },
         0..34,
@@ -257,19 +275,22 @@ fn test_fn_call_as_stmt() {
         Declaration::Function {
             name: "main".to_string(),
             arguments: vec![],
-            body: Statement::Block(vec![(
-                Statement::Expression(Box::new((
-                    Expression::FnCall(
-                        "add".to_string(),
-                        vec![
-                            (Expression::Literal(Int(1)), 16..17),
-                            (Expression::Literal(Int(2)), 19..20),
-                        ],
-                    ),
+            body: (
+                Statement::Block(vec![(
+                    Statement::Expression(Box::new((
+                        Expression::FnCall(
+                            "add".to_string(),
+                            vec![
+                                (Expression::Literal(Int(1)), 16..17),
+                                (Expression::Literal(Int(2)), 19..20),
+                            ],
+                        ),
+                        12..21,
+                    ))),
                     12..21,
-                ))),
-                12..21,
-            )]),
+                )]),
+                10..21,
+            ),
             ret_type: None,
         },
         0..21,
@@ -292,24 +313,27 @@ fn test_bin_op_precedence() {
         Declaration::Function {
             name: "main".to_string(),
             arguments: vec![],
-            body: Statement::Block(vec![(
-                Statement::Return(Some((
-                    Expression::BinOp(
-                        BinOp::Add,
-                        Box::new((Expression::Literal(Int(1)), 19..20)),
-                        Box::new((
-                            Expression::BinOp(
-                                BinOp::Mul,
-                                Box::new((Expression::Literal(Int(2)), 23..24)),
-                                Box::new((Expression::Literal(Int(3)), 27..28)),
-                            ),
-                            23..28,
-                        )),
-                    ),
-                    19..28,
-                ))),
-                12..28,
-            )]),
+            body: (
+                Statement::Block(vec![(
+                    Statement::Return(Some((
+                        Expression::BinOp(
+                            BinOp::Add,
+                            Box::new((Expression::Literal(Int(1)), 19..20)),
+                            Box::new((
+                                Expression::BinOp(
+                                    BinOp::Mul,
+                                    Box::new((Expression::Literal(Int(2)), 23..24)),
+                                    Box::new((Expression::Literal(Int(3)), 27..28)),
+                                ),
+                                23..28,
+                            )),
+                        ),
+                        19..28,
+                    ))),
+                    12..28,
+                )]),
+                10..28,
+            ),
             ret_type: None,
         },
         0..28,
@@ -360,10 +384,13 @@ fn test_bool_fn() {
         Declaration::Function {
             name: "test".to_string(),
             arguments: vec![],
-            body: Statement::Block(vec![(
-                Statement::Return(Some((Expression::Literal(Bool(true)), 27..31))),
-                20..31,
-            )]),
+            body: (
+                Statement::Block(vec![(
+                    Statement::Return(Some((Expression::Literal(Bool(true)), 27..31))),
+                    20..31,
+                )]),
+                18..31,
+            ),
             ret_type: Some(Type::Bool),
         },
         0..31,
@@ -371,3 +398,4 @@ fn test_bool_fn() {
     assert_eq!(decls.len(), expected.len());
     assert_eq!(decls, expected);
 }
+
