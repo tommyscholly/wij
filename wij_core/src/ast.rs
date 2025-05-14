@@ -1,5 +1,5 @@
 mod macros;
-mod typed;
+pub mod typed;
 mod types;
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
 
 use types::Type;
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt::Display};
 
 pub type Span = std::ops::Range<usize>;
 pub type Spanned<T> = (T, Span);
@@ -73,8 +73,8 @@ impl AstError for ParseError {
         self.span.clone()
     }
 
-    fn reason(&self) -> &str {
-        self.reason.as_deref().unwrap_or("")
+    fn reason(&self) -> String {
+        self.reason.clone().unwrap_or_default()
     }
 }
 
@@ -292,6 +292,25 @@ pub enum BinOp {
     GtEq,
     Lt,
     LtEq,
+}
+
+impl Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinOp::Add => write!(f, "+"),
+            BinOp::Sub => write!(f, "-"),
+            BinOp::Mul => write!(f, "*"),
+            BinOp::Div => write!(f, "/"),
+            BinOp::And => write!(f, "and"),
+            BinOp::Or => write!(f, "or"),
+            BinOp::EqEq => write!(f, "=="),
+            BinOp::NEq => write!(f, "!="),
+            BinOp::Gt => write!(f, ">"),
+            BinOp::GtEq => write!(f, ">="),
+            BinOp::Lt => write!(f, "<"),
+            BinOp::LtEq => write!(f, "<="),
+        }
+    }
 }
 
 impl BinOp {

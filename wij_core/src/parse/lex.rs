@@ -32,11 +32,11 @@ impl AstError for LexError {
         Some(self.span.clone())
     }
 
-    fn reason(&self) -> &str {
+    fn reason(&self) -> String {
         match &self.kind {
-            LexErrorKind::UnexpectedChar(_) => "Unexpected character",
-            LexErrorKind::UnexpectedKeyword(_) => "Unexpected keyword",
-            LexErrorKind::UnexpectedEOF => "Unexpected end of input",
+            LexErrorKind::UnexpectedChar(c) => format!("Unexpected character: {}", c),
+            LexErrorKind::UnexpectedKeyword(kw) => format!("Unexpected keyword: {}", kw),
+            LexErrorKind::UnexpectedEOF => "Unexpected end of input".to_string(),
         }
     }
 }

@@ -3,7 +3,7 @@ use std::process::exit;
 use ariadne::{ColorGenerator, Label, Report, ReportKind, Source};
 use clap::Parser as Clap;
 
-use wij_core::{AstError, Parser, tokenize};
+use wij_core::{AstError, Parser, tokenize, type_check};
 
 #[derive(Clap)]
 struct Options {
@@ -57,5 +57,13 @@ fn main() {
         }
     }
 
-    println!("{:#?}", prog);
+    let typed_prog = match type_check(prog) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&options.file, src, "Type Error", e);
+            return;
+        }
+    };
+
+    println!("{:#?}", typed_prog);
 }

@@ -1,7 +1,7 @@
 #![allow(unused)]
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
-use crate::ast::Type;
+use crate::{AstError, ast::Type};
 
 use super::{BinOp, Declaration, Expression, Literal, Span, Spanned, Statement, Var};
 
@@ -26,6 +26,33 @@ pub enum TypeErrorKind {
     },
 }
 
+impl Display for TypeErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TypeErrorKind::*;
+        match self {
+            UndefinedVariable(ident) => write!(f, "Undefined variable `{}`", ident),
+            UndefinedType(ident) => write!(f, "Undefined type `{}`", ident),
+            UndefinedFunction(ident) => write!(f, "Undefined function `{}`", ident),
+            IdentUsedAsFn(ident) => write!(f, "Identifier `{}` used as function", ident),
+            FunctionArityMismatch { expected, found } => {
+                write!(f, "Expected {} arguments, but found {}", expected, found)
+            }
+            TypeMismatch { expected, found } => {
+                write!(f, "Expected `{}` but found `{}`", expected, found)
+            }
+            IncompatibleTypes {
+                operation,
+                lhs,
+                rhs,
+            } => write!(
+                f,
+                "Incompatible types for operation `{}`: {} and {}",
+                operation, lhs, rhs
+            ),
+        }
+    }
+}
+
 pub struct TypeError {
     kind: TypeErrorKind,
     span: Span,
@@ -37,6 +64,16 @@ impl TypeError {
     }
 }
 
+impl AstError for TypeError {
+    fn span(&self) -> Option<Span> {
+        Some(self.span.clone())
+    }
+
+    fn reason(&self) -> String {
+        self.kind.to_string()
+    }
+}
+
 pub type TypeResult<T> = Result<T, TypeError>;
 
 pub type VarId = u32;
@@ -45,6 +82,21 @@ pub type VarId = u32;
 pub struct FunctionSignature {
     param_types: Vec<Type>,
     ret_type: Type,
+}
+
+impl Display for FunctionSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "({}) -> {}",
+            self.param_types
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.ret_type
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -428,9 +480,9 @@ pub fn type_decl(ctx: &mut TyCtx, decl: Spanned<Declaration>) -> TypeResult<Type
     Ok(decl)
 }
 
-fn register_types(ctx: &mut TyCtx, decls: &Vec<Declaration>) {
+fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>) {
     for decl in decls {
-        match decl {
+        match &decl.0 {
             Declaration::Record { name, fields } => {
                 let fields: Vec<(String, Type)> = fields
                     .iter()
@@ -440,7 +492,7 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Declaration>) {
                 ctx.insert_user_def_type(name.to_string(), type_);
             }
             Declaration::Enum { name, .. } => {
-                todo!()
+                // todo!()
             }
             _ => {}
         }
@@ -452,7 +504,7 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Declaration>) {
             arguments,
             body,
             ret_type,
-        } = decl
+        } = &decl.0
         {
             let param_types: Vec<Type> = arguments.iter().map(|(var, _)| var.ty.clone()).collect();
 
@@ -466,10 +518,16 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Declaration>) {
     }
 }
 
-pub fn type_check(decls: Vec<Declaration>) -> bool {
+pub fn type_check(decls: Vec<Spanned<Declaration>>) -> TypeResult<Vec<TypedDecl>> {
     let mut ctx = TyCtx::new();
 
     register_types(&mut ctx, &decls);
 
-    todo!()
+    let mut ty_decls = vec![];
+    for decl in decls {
+        let ty_decl = type_decl(&mut ctx, decl)?;
+        ty_decls.push(ty_decl);
+    }
+
+    Ok(ty_decls)
 }
