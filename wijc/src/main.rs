@@ -77,6 +77,8 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
 
     let module_uses = use_analysis::extract_module_uses(&prog);
     let mut additional_modules = Vec::new();
+    let mut imports = Vec::new();
+
     for module_import in module_uses {
         let module_name = module_import.join(":");
         let module_file_path =
@@ -86,6 +88,8 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
         match module_files {
             Ok(module_files) => {
                 let module = compile_module(module_name, module_files, options);
+                imports.append(&mut module.exports.clone());
+
                 additional_modules.push(module);
             }
             Err(e) => {
@@ -94,7 +98,7 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
         }
     }
 
-    let module = match type_check(prog) {
+    let module = match type_check(prog, imports) {
         Ok(p) => p,
         Err(e) => {
             report_error(file, src, "Type Error", e);
@@ -122,6 +126,8 @@ fn compile_module(module_name: String, module_files: Vec<PathBuf>, options: &Opt
         // file_mods becomes just the dependent modules after the first
         dependent_modules.append(&mut file_mods);
     }
+
+    println!("{:?}", module.exports);
 
     module
 }

@@ -187,12 +187,23 @@ pub struct TypedDecl {
     pub visible: bool,
 }
 
+impl TypedDecl {
+    fn name(&self) -> Option<&str> {
+        match &self.kind {
+            DeclKind::Function { name, .. } => Some(name),
+            DeclKind::Record { name, .. } => Some(name),
+            DeclKind::Enum { name, .. } => Some(name),
+            DeclKind::ForeignDeclarations(..) => None,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Module {
     pub name: String,
     pub decls: Vec<TypedDecl>,
-    // idxs of decls that are exported
-    pub exports: Vec<usize>,
+    // todo: idxs of decls that are exported?
+    pub exports: Vec<TypedDecl>,
 }
 
 impl Module {
@@ -205,12 +216,8 @@ impl Module {
     }
 
     pub fn combine(&mut self, mut other: Module) {
-        assert!(self.name == other.name);
         self.decls.append(&mut other.decls);
-
-        for export in other.exports {
-            self.exports.push(export + self.exports.len());
-        }
+        self.exports.append(&mut other.exports);
     }
 }
 
@@ -424,10 +431,9 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
                 for (arg, ty_arg) in param_types.iter().zip(ty_args.iter()) {
                     if arg != &ty_arg.ty {
                         return Err(TypeError::new(
-                            TypeErrorKind::IncompatibleTypes {
-                                operation: BinOp::EqEq,
-                                lhs: arg.clone(),
-                                rhs: ty_arg.ty.clone(),
+                            TypeErrorKind::TypeMismatch {
+                                expected: arg.clone(),
+                                found: ty_arg.ty.clone(),
                             },
                             expr.1,
                         ));
@@ -557,9 +563,10 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
             }
 
             TypedDecl {
-                ty: ctx
-                    .get_user_def_type(&name)
-                    .expect("function type should have been parsed"),
+                ty: match ctx.get_user_def_type(&name) {
+                    Some(ty) => ty,
+                    None => return Err(TypeError::new(TypeErrorKind::IdentUsedAsFn(name), decl.1)),
+                },
                 kind: DeclKind::Function {
                     name,
                     arguments: args,
@@ -630,7 +637,7 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
     Ok(decl)
 }
 
-fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>) {
+fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: Vec<TypedDecl>) {
     for decl in decls {
         match &decl.0 {
             Declaration::Record { name, fields } => {
@@ -649,21 +656,39 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>) {
     }
 
     for decl in decls {
-        if let Declaration::Function {
-            name,
-            arguments,
-            body,
-            ret_type,
-        } = &decl.0
-        {
-            let param_types: Vec<Type> = arguments.iter().map(|(var, _)| var.ty.clone()).collect();
-
-            let ret_type = ret_type.clone().unwrap_or(Type::Unit);
-            let signature = FunctionSignature {
-                param_types,
+        let (name, arguments, body, ret_type) = match &decl.0 {
+            Declaration::Function {
+                name,
+                arguments,
+                body,
                 ret_type,
-            };
-            ctx.insert_user_def_type(name.to_string(), Type::Fn(Box::new(signature)));
+            } => (name, arguments, body, ret_type),
+            Declaration::Public(decl) => match &decl.0 {
+                Declaration::Function {
+                    name,
+                    arguments,
+                    body,
+                    ret_type,
+                } => (name, arguments, body, ret_type),
+                _ => continue,
+            },
+            _ => continue,
+        };
+
+        let param_types: Vec<Type> = arguments.iter().map(|(var, _)| var.ty.clone()).collect();
+
+        let ret_type = ret_type.clone().unwrap_or(Type::Unit);
+        let signature = FunctionSignature {
+            param_types,
+            ret_type,
+        };
+        println!("registered fn {}: {}", name, signature);
+        ctx.insert_user_def_type(name.to_string(), Type::Fn(Box::new(signature)));
+    }
+
+    for decl in imports {
+        if let Some(name) = decl.name() {
+            ctx.insert_user_def_type(name.to_string(), decl.ty.clone());
         }
     }
 }
@@ -711,12 +736,12 @@ fn extract_module_uses(decls: Vec<Spanned<Declaration>>) -> TypeResult<ModuleUse
     Ok((module, uses, filt_decls))
 }
 
-pub fn type_check(decls: Vec<Spanned<Declaration>>) -> TypeResult<Module> {
+pub fn type_check(decls: Vec<Spanned<Declaration>>, imports: Vec<TypedDecl>) -> TypeResult<Module> {
     let mut ctx = TyCtx::new();
 
     let (mut module, uses, decls) = extract_module_uses(decls)?;
 
-    register_types(&mut ctx, &decls);
+    register_types(&mut ctx, &decls, imports);
 
     let mut ctx = ScopedCtx::from_tyctx(ctx);
     let mut ty_decls = vec![];
@@ -724,7 +749,7 @@ pub fn type_check(decls: Vec<Spanned<Declaration>>) -> TypeResult<Module> {
     for (i, decl) in decls.into_iter().enumerate() {
         let ty_decl = type_decl(&mut ctx, decl)?;
         if ty_decl.visible {
-            exports.push(i);
+            exports.push(ty_decl.clone());
         }
         ty_decls.push(ty_decl);
     }

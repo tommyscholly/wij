@@ -8,6 +8,6 @@ foreign {
 }
 
 fn println(msg: str) {
-    write(1, msg, strlen(msg));
-    write(1, "\n", 1);
+    write(1, strbytes(msg), strlen(msg));
+    write(1, strbytes("\n"), 1);
 }
