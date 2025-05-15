@@ -169,7 +169,13 @@ fn test_type_enum() {
     let expected = vec![(
         Declaration::Enum {
             name: "Test".to_string(),
-            variants: vec![("Red".to_string(), 12..15)],
+            variants: vec![(
+                EnumVariant {
+                    name: "Red".to_string(),
+                    data: None,
+                },
+                12..15,
+            )],
         },
         0..15,
     )];

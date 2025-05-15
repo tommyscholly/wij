@@ -127,6 +127,7 @@ impl TryFrom<&str> for BinOp {
             "-" => Ok(BinOp::Sub),
             "*" => Ok(BinOp::Mul),
             "/" => Ok(BinOp::Div),
+            "%" => Ok(BinOp::Mod),
             "==" => Ok(BinOp::EqEq),
             "!=" => Ok(BinOp::NEq),
             ">" => Ok(BinOp::Gt),

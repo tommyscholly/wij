@@ -10,6 +10,7 @@ pub enum TypeErrorKind {
     UndefinedVariable(String),
     UndefinedType(String),
     UndefinedFunction(String),
+    Unassignable,
     IdentUsedAsFn(String),
     DuplicateModule,
     ModuleNotFound,
@@ -35,6 +36,7 @@ impl Display for TypeErrorKind {
             UndefinedVariable(ident) => write!(f, "Undefined variable `{}`", ident),
             UndefinedType(ident) => write!(f, "Undefined type `{}`", ident),
             UndefinedFunction(ident) => write!(f, "Undefined function `{}`", ident),
+            Unassignable => write!(f, "Cannot assign to this expression"),
             IdentUsedAsFn(ident) => write!(f, "Identifier `{}` used as function", ident),
             FunctionArityMismatch { expected, found } => {
                 write!(f, "Expected {} arguments, but found {}", expected, found)
@@ -123,6 +125,7 @@ pub enum StatementKind {
         then_block: Box<TypedStatement>,
         else_block: Option<Box<TypedStatement>>,
     },
+    Assignment(Box<TypedExpression>, Box<TypedExpression>),
     // Match {
     //     value: TypedExpression,
     //     cases: Vec<MatchCase>,
@@ -144,6 +147,7 @@ pub enum ExpressionKind {
     FieldAccess(Box<TypedExpression>, String),
     BinOp(BinOp, Box<TypedExpression>, Box<TypedExpression>),
     FnCall(String, Vec<TypedExpression>),
+    RecordInit(String, Vec<(String, TypedExpression)>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -156,7 +160,7 @@ pub struct TypedExpression {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EnumVariant {
     pub name: String,
-    pub fields: Vec<TypedVar>,
+    pub data: Option<Spanned<Type>>,
     pub span: Span,
 }
 
@@ -332,6 +336,29 @@ fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>) -> TypeResult<TypedVar> {
 
 fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpression> {
     let expr = match expr.0 {
+        Expression::RecordInit(record_name, assignments) => {
+            let mut ty_assignments = vec![];
+            for assignment in assignments {
+                let (name, expr) = assignment;
+                let ty_expr = type_expr(ctx, expr)?;
+                ty_assignments.push((name, ty_expr));
+            }
+
+            let record_ty = ctx.get_user_def_type(&record_name);
+            match record_ty {
+                Some(ty) => TypedExpression {
+                    ty: ty.clone(),
+                    kind: ExpressionKind::RecordInit(record_name, ty_assignments),
+                    span: expr.1,
+                },
+                None => {
+                    return Err(TypeError::new(
+                        TypeErrorKind::UndefinedType(record_name),
+                        expr.1,
+                    ));
+                }
+            }
+        }
         Expression::Literal(lit) => TypedExpression {
             ty: match lit {
                 Literal::Int(_) => Type::Int,
@@ -358,7 +385,7 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
             let ty_lhs = type_expr(ctx, *lhs)?;
             let ty_rhs = type_expr(ctx, *rhs)?;
             let bop_ty = match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => Type::Int,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => Type::Int,
                 BinOp::And
                 | BinOp::Or
                 | BinOp::EqEq
@@ -467,6 +494,33 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
 
 fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedStatement> {
     let stmt = match stmt.0 {
+        Statement::Assignment(lhs, rhs) => {
+            let ty_lhs = type_expr(ctx, *lhs)?;
+            let ty_rhs = type_expr(ctx, *rhs)?;
+
+            if ty_lhs.ty != ty_rhs.ty {
+                return Err(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: ty_lhs.ty,
+                        found: ty_rhs.ty,
+                    },
+                    stmt.1,
+                ));
+            }
+
+            if !matches!(
+                ty_lhs.kind,
+                ExpressionKind::Ident(_) | ExpressionKind::FieldAccess(_, _)
+            ) {
+                return Err(TypeError::new(TypeErrorKind::Unassignable, stmt.1));
+            }
+
+            TypedStatement {
+                ty: ty_lhs.ty.clone(),
+                kind: StatementKind::Assignment(Box::new(ty_lhs), Box::new(ty_rhs)),
+                span: stmt.1,
+            }
+        }
         Statement::Let { var, value } => {
             let val = if let Some(expr) = value {
                 Some(type_expr(ctx, expr)?)
@@ -584,8 +638,8 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                 variants: variants
                     .into_iter()
                     .map(|var| EnumVariant {
-                        name: var.0,
-                        fields: vec![],
+                        name: var.0.name,
+                        data: var.0.data,
                         span: var.1,
                     })
                     .collect(),

@@ -150,6 +150,7 @@ pub enum Statement {
         value: Spanned<Expression>,
         cases: Vec<Spanned<MatchCase>>,
     },
+    Assignment(Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     Expression(Box<Spanned<Expression>>), // a subclass of expressions being executed for side effects
 }
 
@@ -260,7 +261,17 @@ impl Parseable for Statement {
             }
             Some(t) => {
                 let expr = Expression::parse(parser)?;
-                if expr.0.is_fn_call() {
+                if let Some((Token::Eq, _)) = parser.peek_next() {
+                    parser.pop_next();
+                    let rhs = Expression::parse(parser)?;
+                    let expr_span = expr.1.clone();
+                    let _ = parser.expect_next(Token::SemiColon)?;
+                    let new_span = expr_span.start..rhs.1.end;
+                    Ok((
+                        Statement::Assignment(Box::new(expr), Box::new(rhs)),
+                        new_span,
+                    ))
+                } else if expr.0.is_fn_call() {
                     let _ = parser.expect_next(Token::SemiColon)?;
                     let expr_span = expr.1.clone();
                     Ok((Statement::Expression(Box::new(expr)), expr_span))
@@ -285,6 +296,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Mod,
 
     And,
     Or,
@@ -303,6 +315,7 @@ impl Display for BinOp {
             BinOp::Sub => write!(f, "-"),
             BinOp::Mul => write!(f, "*"),
             BinOp::Div => write!(f, "/"),
+            BinOp::Mod => write!(f, "%"),
             BinOp::And => write!(f, "and"),
             BinOp::Or => write!(f, "or"),
             BinOp::EqEq => write!(f, "=="),
@@ -324,6 +337,7 @@ impl BinOp {
             BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => 4,
             BinOp::Add | BinOp::Sub => 5,
             BinOp::Mul | BinOp::Div => 6,
+            BinOp::Mod => 7,
         }
     }
 }
@@ -338,6 +352,25 @@ pub enum Expression {
     FieldAccess(Box<Spanned<Expression>>, String),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     FnCall(String, Vec<Spanned<Expression>>),
+    RecordInit(String, Vec<(String, Spanned<Expression>)>),
+}
+
+fn parse_record_assignments(
+    parser: &mut Parser,
+) -> ParseResult<Vec<(String, Spanned<Expression>)>> {
+    let mut assignments = Vec::new();
+    loop {
+        let ident = parser.expect_ident()?.0;
+        let _ = parser.expect_next(Token::Eq)?;
+        let expr = Expression::parse(parser)?;
+        assignments.push((ident, expr));
+        if let Some((Token::Comma, _)) = parser.peek_next() {
+            parser.pop_next();
+        } else {
+            break;
+        }
+    }
+    Ok(assignments)
 }
 
 impl Expression {
@@ -391,6 +424,13 @@ impl Expression {
                         let full_span = span.start..rparen_span.end;
                         (Expression::FnCall(ident, args), full_span)
                     }
+                }
+                Some((Token::LBrace, _)) => {
+                    parser.pop_next();
+                    let assignments = parse_record_assignments(parser)?;
+                    let (_, rbrace_span) = parser.expect_next(Token::RBrace)?;
+                    let full_span = span.start..rbrace_span.end;
+                    (Expression::RecordInit(ident, assignments), full_span)
                 }
                 _ => (Expression::Ident(ident), span),
             },
@@ -530,6 +570,12 @@ impl Parseable for ForeignDeclaration {
 pub type Path = Vec<String>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub data: Option<Spanned<Type>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Declaration {
     Function {
         name: String,
@@ -543,7 +589,7 @@ pub enum Declaration {
     },
     Enum {
         name: String,
-        variants: Vec<Spanned<String>>,
+        variants: Vec<Spanned<EnumVariant>>,
     },
     Module(String),
     ForeignDeclarations(Vec<Spanned<ForeignDeclaration>>),
@@ -683,29 +729,57 @@ impl Parseable for Declaration {
                         let mut variants = Vec::new();
                         loop {
                             let (variant_name, variant_span) = parser.expect_ident()?;
+                            let mut variant = EnumVariant {
+                                name: variant_name,
+                                data: None,
+                            };
                             match parser.peek_next() {
                                 Some((Token::Bar, _)) => {
-                                    variants.push((variant_name, variant_span));
+                                    variants.push((variant, variant_span));
                                     parser.pop_next();
                                 }
                                 Some((Token::SemiColon, _)) => {
-                                    variants.push((variant_name, variant_span));
+                                    variants.push((variant, variant_span));
                                     parser.pop_next();
                                     break;
                                 }
-                                Some((Token::LBrace, _)) => {
-                                    // Record
-                                    unimplemented!()
-                                    // let fields = parse_args(parser, Token::RBrace)?;
-                                    // variants.push((variant_name, fields));
-                                    // break;
-                                }
-                                Some((t, span)) => {
-                                    return Err(ParseError::with_reason(
-                                        ParseErrorKind::MalformedExpression,
-                                        span,
-                                        &format!("Expected semicolon or bar, got {:?}", t),
-                                    ));
+                                Some((t, ty_span)) => {
+                                    let ty = match Type::parse(parser) {
+                                        Ok(t) => t,
+                                        Err(_) => {
+                                            return Err(ParseError::with_reason(
+                                                ParseErrorKind::MalformedExpression,
+                                                ty_span,
+                                                &format!(
+                                                    "Expected semicolon, bar or type, got {:?}",
+                                                    t
+                                                ),
+                                            ));
+                                        }
+                                    };
+
+                                    variant.data = Some(ty);
+                                    variants.push((variant, variant_span.start..ty_span.end));
+
+                                    match parser.peek_next() {
+                                        Some((Token::Bar, _)) => {
+                                            parser.pop_next();
+                                        }
+                                        Some((Token::SemiColon, _)) => {
+                                            parser.pop_next();
+                                            break;
+                                        }
+                                        tt => {
+                                            return Err(ParseError::with_reason(
+                                                ParseErrorKind::MalformedExpression,
+                                                ty_span,
+                                                &format!(
+                                                    "Expected semicolon, bar or type, got {:?}",
+                                                    tt
+                                                ),
+                                            ));
+                                        }
+                                    }
                                 }
                                 None => {
                                     return Err(ParseError::new(

@@ -127,8 +127,6 @@ fn compile_module(module_name: String, module_files: Vec<PathBuf>, options: &Opt
         dependent_modules.append(&mut file_mods);
     }
 
-    println!("{:?}", module.exports);
-
     module
 }
 

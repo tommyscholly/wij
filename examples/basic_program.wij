@@ -1,6 +1,12 @@
 module main;
 
-type Color = Red | Green | Blue;
+use core:fmt;
+
+type Color = Red | Green | Blue int;
+
+type Test = {
+    x: int
+}
 
 fn fib(n: int) -> int {
     if n == 0 or n == 1 {
@@ -13,5 +19,10 @@ fn fib(n: int) -> int {
 fn main() {
     let x: int = 5;
     let y: int = fib(x);
-    print(y);
+
+    let t: Test = Test { x = 1 };
+
+    x = 1;
+    t.x = 2;
+    println(y);
 }
