@@ -8,3 +8,8 @@ type StringData = {
 foreign {
     __compiler_intrinsic_str_data: fn(s: str) -> StringData;
 }
+
+pub fn strlen(s: str) -> int {
+    let data: StringData = __compiler_intrinsic_str_data(s);
+    return data.length;
+}

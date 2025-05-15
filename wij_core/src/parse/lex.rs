@@ -115,7 +115,6 @@ pub enum Token {
     Colon,
     Arrow,
     Bar,
-    Star,
     Dot,
 }
 
@@ -182,9 +181,6 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                 }
                 ']' => {
                     advance_single_token!(self, Token::RBracket)
-                }
-                '*' => {
-                    advance_single_token!(self, Token::Star)
                 }
                 ',' => {
                     advance_single_token!(self, Token::Comma)

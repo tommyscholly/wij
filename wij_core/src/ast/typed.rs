@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use crate::{AstError, ast::Type};
 
-use super::{BinOp, Declaration, Expression, Literal, Span, Spanned, Statement, Var};
+use super::{BinOp, Declaration, Expression, Literal, Path, Span, Spanned, Statement, Var};
 
 #[derive(Debug)]
 pub enum TypeErrorKind {
@@ -141,6 +141,7 @@ pub struct TypedStatement {
 pub enum ExpressionKind {
     Literal(Literal),
     Ident(String),
+    FieldAccess(Box<TypedExpression>, String),
     BinOp(BinOp, Box<TypedExpression>, Box<TypedExpression>),
     FnCall(String, Vec<TypedExpression>),
 }
@@ -183,12 +184,34 @@ pub struct TypedDecl {
     pub kind: DeclKind,
     pub ty: Type,
     pub span: Span,
+    pub visible: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Module {
     pub name: String,
     pub decls: Vec<TypedDecl>,
+    // idxs of decls that are exported
+    pub exports: Vec<usize>,
+}
+
+impl Module {
+    pub fn new(name: String) -> Module {
+        Module {
+            name,
+            decls: vec![],
+            exports: vec![],
+        }
+    }
+
+    pub fn combine(&mut self, mut other: Module) {
+        assert!(self.name == other.name);
+        self.decls.append(&mut other.decls);
+
+        for export in other.exports {
+            self.exports.push(export + self.exports.len());
+        }
+    }
 }
 
 #[derive(Default, Clone, Debug)]
@@ -421,6 +444,16 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
                 span: expr.1,
             }
         }
+        Expression::FieldAccess(expr, field_name) => {
+            let expr_span = expr.1.clone();
+            let ty_expr = type_expr(ctx, *expr)?;
+            TypedExpression {
+                // todo: this is wrong
+                ty: ty_expr.ty.clone(),
+                kind: ExpressionKind::FieldAccess(Box::new(ty_expr), field_name),
+                span: expr_span,
+            }
+        }
     };
 
     Ok(expr)
@@ -534,6 +567,7 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                     ret_type,
                 },
                 span: decl.1,
+                visible: false,
             }
         }
         Declaration::Enum { name, variants } => TypedDecl {
@@ -550,6 +584,7 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                     .collect(),
             },
             span: decl.1,
+            visible: false,
         },
 
         Declaration::Record { name, fields } => {
@@ -564,9 +599,9 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                     .expect("record type should have been parsed"),
                 kind: DeclKind::Record { name, fields },
                 span: decl.1,
+                visible: false,
             }
         }
-        Declaration::Module(_) => unreachable!(),
         Declaration::ForeignDeclarations(fds) => {
             let mut ty_fds = vec![];
             for (fd, _) in fds {
@@ -580,9 +615,16 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                 ty: Type::Unit,
                 kind: DeclKind::ForeignDeclarations(ty_fds),
                 span: decl.1,
+                visible: false,
             }
         }
+        Declaration::Public(decl) => {
+            let mut ty_decl = type_decl(ctx, *decl)?;
+            ty_decl.visible = true;
+            ty_decl
+        }
         Declaration::Use(_) => todo!(),
+        Declaration::Module(_) => unreachable!(),
     };
 
     Ok(decl)
@@ -626,11 +668,11 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>) {
     }
 }
 
+type ModuleUseDecls = (Module, Vec<Spanned<Path>>, Vec<Spanned<Declaration>>);
+
 // Filters decls into decls, modules and uses
 // Should only ever be one module
-fn extract_module_uses(
-    decls: Vec<Spanned<Declaration>>,
-) -> TypeResult<(Module, Vec<Spanned<Declaration>>)> {
+fn extract_module_uses(decls: Vec<Spanned<Declaration>>) -> TypeResult<ModuleUseDecls> {
     let mut filt_decls: Vec<Spanned<Declaration>> = vec![];
     let mut modules = vec![];
     let mut uses = vec![];
@@ -663,26 +705,32 @@ fn extract_module_uses(
     let module = Module {
         name: modules[0].0.clone(),
         decls: vec![],
+        exports: vec![],
     };
 
-    Ok((module, filt_decls))
+    Ok((module, uses, filt_decls))
 }
 
 pub fn type_check(decls: Vec<Spanned<Declaration>>) -> TypeResult<Module> {
     let mut ctx = TyCtx::new();
 
-    let (mut module, decls) = extract_module_uses(decls)?;
+    let (mut module, uses, decls) = extract_module_uses(decls)?;
 
     register_types(&mut ctx, &decls);
 
     let mut ctx = ScopedCtx::from_tyctx(ctx);
     let mut ty_decls = vec![];
-    for decl in decls {
+    let mut exports = vec![];
+    for (i, decl) in decls.into_iter().enumerate() {
         let ty_decl = type_decl(&mut ctx, decl)?;
+        if ty_decl.visible {
+            exports.push(i);
+        }
         ty_decls.push(ty_decl);
     }
 
     module.decls = ty_decls;
+    module.exports = exports;
 
     Ok(module)
 }

@@ -1,6 +1,7 @@
 mod macros;
 pub mod typed;
 mod types;
+pub mod use_analysis;
 
 use crate::{
     AstError, match_optional_token,
@@ -34,6 +35,7 @@ pub enum ParseErrorKind {
     ExpectedSemiColon,
     EndOfInput,
     TypeNameCapitalized,
+    InvalidVisibility,
 }
 
 #[derive(Debug)]
@@ -333,6 +335,7 @@ pub enum Expression {
     // String(String),
     Literal(Literal),
     Ident(String),
+    FieldAccess(Box<Spanned<Expression>>, String),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     FnCall(String, Vec<Spanned<Expression>>),
 }
@@ -344,15 +347,14 @@ impl Expression {
 
     fn parse_primary(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
         use Literal::*;
-        match parser.pop_next() {
-            Some((Token::Int(i), span)) => Ok((Expression::Literal(Int(i)), span)),
-            Some((Token::Keyword(Keyword::True), span)) => {
-                Ok((Expression::Literal(Bool(true)), span))
-            }
+
+        let mut expr = match parser.pop_next() {
+            Some((Token::Int(i), span)) => (Expression::Literal(Int(i)), span),
+            Some((Token::Keyword(Keyword::True), span)) => (Expression::Literal(Bool(true)), span),
             Some((Token::Keyword(Keyword::False), span)) => {
-                Ok((Expression::Literal(Bool(false)), span))
+                (Expression::Literal(Bool(false)), span)
             }
-            Some((Token::String(s), span)) => Ok((Expression::Literal(Str(s)), span)),
+            Some((Token::String(s), span)) => (Expression::Literal(Str(s)), span),
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
@@ -361,51 +363,74 @@ impl Expression {
                     if let Some((Token::RParen, end_span)) = parser.peek_next() {
                         parser.pop_next();
                         let full_span = span.start..end_span.end;
-                        return Ok((Expression::FnCall(ident, args), full_span));
-                    }
+                        (Expression::FnCall(ident, args), full_span)
+                    } else {
+                        loop {
+                            let arg = Expression::parse(parser)?;
+                            let arg_span = arg.1.clone();
+                            args.push(arg);
 
-                    loop {
-                        let arg = Expression::parse(parser)?;
-                        let arg_span = arg.1.clone();
-                        args.push(arg);
-
-                        match parser.peek_next() {
-                            Some((Token::Comma, _)) => {
-                                parser.pop_next();
-                            }
-                            Some((Token::RParen, _)) => {
-                                break;
-                            }
-                            _ => {
-                                return Err(ParseError::with_reason(
-                                    ParseErrorKind::MalformedExpression,
-                                    arg_span,
-                                    "Expected ',' or ')' in function arguments",
-                                ));
+                            match parser.peek_next() {
+                                Some((Token::Comma, _)) => {
+                                    parser.pop_next();
+                                }
+                                Some((Token::RParen, _)) => {
+                                    break;
+                                }
+                                _ => {
+                                    return Err(ParseError::with_reason(
+                                        ParseErrorKind::MalformedExpression,
+                                        arg_span,
+                                        "Expected ',' or ')' in function arguments",
+                                    ));
+                                }
                             }
                         }
-                    }
 
-                    let (_, rparen_span) = parser.expect_next(Token::RParen)?;
-                    let full_span = span.start..rparen_span.end;
-                    Ok((Expression::FnCall(ident, args), full_span))
+                        let (_, rparen_span) = parser.expect_next(Token::RParen)?;
+                        let full_span = span.start..rparen_span.end;
+                        (Expression::FnCall(ident, args), full_span)
+                    }
                 }
-                _ => Ok((Expression::Ident(ident), span)),
+                _ => (Expression::Ident(ident), span),
             },
             Some((Token::LParen, lparen_span)) => {
                 // handle parenthesized expressions
                 let expr = Expression::parse(parser)?;
                 let (_, rparen_span) = parser.expect_next(Token::RParen)?;
                 let full_span = lparen_span.start..rparen_span.end;
-                Ok((expr.0, full_span)) // return the inner expression with updated span
+                (expr.0, full_span) // return the inner expression with updated span
             }
-            Some((token, span)) => Err(ParseError::with_reason(
-                ParseErrorKind::MalformedExpression,
-                span,
-                &format!("Expected expression, got {:?}", token),
-            )),
-            None => Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
+            Some((token, span)) => {
+                return Err(ParseError::with_reason(
+                    ParseErrorKind::MalformedExpression,
+                    span,
+                    &format!("Expected expression, got {:?}", token),
+                ));
+            }
+            None => return Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
+        };
+
+        while let Some((Token::Dot, _)) = parser.peek_next() {
+            parser.pop_next();
+
+            if let Some((Token::Identifier(field_name), field_span)) = parser.pop_next() {
+                let start = expr.1.start;
+                let end = field_span.end;
+                expr = (
+                    Expression::FieldAccess(Box::new(expr), field_name),
+                    start..end,
+                );
+            } else {
+                return Err(ParseError::with_reason(
+                    ParseErrorKind::MalformedExpression,
+                    expr.1.clone(),
+                    "Expected field name after '.'",
+                ));
+            }
         }
+
+        Ok(expr)
     }
 
     // parse bin ops using precedence climbing
@@ -502,6 +527,8 @@ impl Parseable for ForeignDeclaration {
     }
 }
 
+pub type Path = Vec<String>;
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Declaration {
     Function {
@@ -520,7 +547,8 @@ pub enum Declaration {
     },
     Module(String),
     ForeignDeclarations(Vec<Spanned<ForeignDeclaration>>),
-    Use(String),
+    Use(Path),
+    Public(Box<Spanned<Declaration>>),
 }
 
 fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned<Var>>> {
@@ -574,10 +602,16 @@ impl Parseable for Declaration {
             }
             Some((Token::Keyword(Keyword::Use), use_span)) => {
                 let _use_span = parser.expect_kw_kind(Keyword::Use)?;
-                let (name, name_span) = parser.expect_ident()?;
-                let _semi = parser.expect_next(Token::SemiColon)?;
-                let span = use_span.start..name_span.end;
-                Ok((Declaration::Use(name), span))
+                let (name, _) = parser.expect_ident()?;
+                let mut path = vec![name];
+                while let Some((Token::Colon, _)) = parser.peek_next() {
+                    parser.pop_next();
+                    let (name, _) = parser.expect_ident()?;
+                    path.push(name);
+                }
+                let (_, semi_span) = parser.expect_next(Token::SemiColon)?;
+                let span = use_span.start..semi_span.end;
+                Ok((Declaration::Use(path), span))
             }
             Some((Token::Keyword(Keyword::Fn), _)) => {
                 let start_span = parser.expect_kw_kind(Keyword::Fn)?;
@@ -601,6 +635,22 @@ impl Parseable for Declaration {
                     },
                     span,
                 ))
+            }
+            Some((Token::Keyword(Keyword::Pub), _)) => {
+                let pub_span = parser.expect_kw_kind(Keyword::Pub)?;
+                let (decl, decl_span) = Declaration::parse(parser)?;
+                match decl {
+                    Declaration::Function { .. }
+                    | Declaration::Record { .. }
+                    | Declaration::Enum { .. } => {}
+                    _ => {
+                        return Err(ParseError::new(
+                            ParseErrorKind::InvalidVisibility,
+                            decl_span,
+                        ));
+                    }
+                }
+                Ok((Declaration::Public(Box::new((decl, decl_span))), pub_span))
             }
             Some((Token::Keyword(Keyword::Type), ty_span_start)) => {
                 let _start_span = parser.expect_kw_kind(Keyword::Type)?;

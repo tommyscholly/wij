@@ -1,7 +1,11 @@
 mod ast;
 mod parse;
 
-pub use ast::{ParseError, Parser, typed::type_check};
+pub use ast::{
+    ParseError, Parser,
+    typed::{Module, type_check},
+    use_analysis,
+};
 pub use parse::lex::tokenize;
 
 pub trait AstError {

@@ -399,3 +399,74 @@ fn test_bool_fn() {
     assert_eq!(decls, expected);
 }
 
+#[test]
+fn test_field_access() {
+    let src = "fn get_age() -> int { return person.age; }";
+    let lexer = tokenize(src);
+    let toks = lexer.map(Result::unwrap).collect();
+    let parser = Parser::new(toks);
+
+    let decls = parser
+        .map(Result::unwrap)
+        .collect::<Vec<Spanned<Declaration>>>();
+
+    let person_ident = (Expression::Ident("person".to_string()), 29..35);
+    let field_access = (
+        Expression::FieldAccess(Box::new(person_ident), "age".to_string()),
+        29..39,
+    );
+
+    let expected = vec![(
+        Declaration::Function {
+            name: "get_age".to_string(),
+            arguments: vec![],
+            body: (
+                Statement::Block(vec![(Statement::Return(Some(field_access)), 22..39)]),
+                20..39,
+            ),
+            ret_type: Some(Type::Int),
+        },
+        0..39,
+    )];
+
+    assert_eq!(decls.len(), expected.len());
+    assert_eq!(decls, expected);
+}
+
+#[test]
+fn test_chained_field_access() {
+    let src = "fn get_city() -> str { return user.address.city; }";
+    let lexer = tokenize(src);
+    let toks = lexer.map(Result::unwrap).collect();
+    let parser = Parser::new(toks);
+
+    let decls = parser
+        .map(Result::unwrap)
+        .collect::<Vec<Spanned<Declaration>>>();
+
+    let user_ident = (Expression::Ident("user".to_string()), 30..34);
+    let address_access = (
+        Expression::FieldAccess(Box::new(user_ident), "address".to_string()),
+        30..42,
+    );
+    let city_access = (
+        Expression::FieldAccess(Box::new(address_access), "city".to_string()),
+        30..47,
+    );
+
+    let expected = vec![(
+        Declaration::Function {
+            name: "get_city".to_string(),
+            arguments: vec![],
+            body: (
+                Statement::Block(vec![(Statement::Return(Some(city_access)), 23..47)]),
+                21..47,
+            ),
+            ret_type: Some(Type::Str),
+        },
+        0..47,
+    )];
+
+    assert_eq!(decls.len(), expected.len());
+    assert_eq!(decls, expected);
+}

@@ -2,7 +2,9 @@ use std::fmt::Display;
 
 use crate::parse::{Token, lex::Keyword};
 
-use super::{ParseError, ParseErrorKind, Parseable, Parser, Spanned, typed::FunctionSignature};
+use super::{
+    BinOp, ParseError, ParseErrorKind, Parseable, Parser, Spanned, typed::FunctionSignature,
+};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Type {
@@ -61,7 +63,7 @@ impl Parseable for Type {
                 parser.pop_next();
                 Ok((Type::UserDef(ident), span))
             }
-            Some((Token::Star, span)) => {
+            Some((Token::BinOp(BinOp::Mul), span)) => {
                 parser.pop_next();
                 let (inner_ty, span_end) = Type::parse(parser)?;
                 let span = span.start..span_end.end;
