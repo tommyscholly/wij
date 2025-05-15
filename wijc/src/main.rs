@@ -8,6 +8,12 @@ use wij_core::{AstError, Parser, tokenize, type_check};
 #[derive(Clap)]
 struct Options {
     file: String,
+    #[clap(short, long)]
+    lex: bool,
+    #[clap(short, long)]
+    parse: bool,
+    #[clap(short, long)]
+    tychk: bool,
 }
 
 fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl AstError) {
@@ -45,6 +51,10 @@ fn main() {
             }
         })
         .collect();
+    if options.lex {
+        println!("{:#?}", tokens);
+        return;
+    }
     let parser = Parser::new(tokens);
     let mut prog = Vec::new();
     for decl in parser {
@@ -56,6 +66,10 @@ fn main() {
             }
         }
     }
+    if options.parse {
+        println!("{:#?}", prog);
+        return;
+    }
 
     let typed_prog = match type_check(prog) {
         Ok(p) => p,
@@ -64,6 +78,11 @@ fn main() {
             return;
         }
     };
+
+    if options.tychk {
+        println!("{:#?}", typed_prog);
+        return;
+    }
 
     println!("{:#?}", typed_prog);
 }

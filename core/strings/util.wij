@@ -1,0 +1,10 @@
+module strings;
+
+type StringData = {
+    buffer: *[byte]
+    length: int
+}
+
+foreign {
+    __compiler_intrinsic_str_data: fn(s: str) -> StringData;
+}

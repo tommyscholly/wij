@@ -1,3 +1,5 @@
+module main;
+
 type Color = Red | Green | Blue;
 
 fn fib(n: int) -> int {

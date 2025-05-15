@@ -7,6 +7,7 @@ use crate::{
     parse::{Token, lex::Keyword},
 };
 
+use typed::FunctionSignature;
 use types::Type;
 
 use std::{collections::VecDeque, fmt::Display};
@@ -113,7 +114,7 @@ impl Parseable for Var {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Literal {
     Int(i32),
-    String(String),
+    Str(String),
     Bool(bool),
 }
 
@@ -195,7 +196,6 @@ impl Parseable for Statement {
             Some((Token::Keyword(Keyword::If), if_start)) => {
                 parser.pop_next();
                 let cond = Expression::parse(parser)?;
-                println!("cond: {cond:?}");
                 let then_block = if let Some((Token::LBrace, _)) = parser.peek_next() {
                     Box::new(Statement::parse(parser)?)
                 } else {
@@ -352,7 +352,7 @@ impl Expression {
             Some((Token::Keyword(Keyword::False), span)) => {
                 Ok((Expression::Literal(Bool(false)), span))
             }
-            // Some((Token::String(s), span)) => Ok((Expression::String(s), span)),
+            Some((Token::String(s), span)) => Ok((Expression::Literal(Str(s)), span)),
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
@@ -460,6 +460,49 @@ impl Parseable for Expression {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ForeignDeclaration {
+    pub name: String,
+    pub sig: FunctionSignature,
+}
+
+impl Parseable for ForeignDeclaration {
+    fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
+        let (name, span) = parser.expect_ident()?;
+
+        let _colon = parser.expect_next(Token::Colon)?;
+        let _fn_kw = parser.expect_kw_kind(Keyword::Fn)?;
+        let _lparen = parser.expect_next(Token::LParen)?;
+        let args = parse_args(parser, Token::RParen)?;
+        let ret_type = if let Some((Token::Arrow, _)) = parser.peek_next() {
+            parser.pop_next();
+            Some(Type::parse(parser)?.0)
+        } else {
+            None
+        };
+        let _semi = parser.expect_next(Token::SemiColon)?;
+
+        let param_types = args.iter().map(|(arg, _)| arg.ty.clone()).collect();
+        let ret_type = match ret_type {
+            Some(t) => t,
+            None => Type::Unit,
+        };
+
+        let func_sig = FunctionSignature {
+            param_types,
+            ret_type,
+        };
+
+        Ok((
+            ForeignDeclaration {
+                name,
+                sig: func_sig,
+            },
+            span,
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Declaration {
     Function {
         name: String,
@@ -475,6 +518,9 @@ pub enum Declaration {
         name: String,
         variants: Vec<Spanned<String>>,
     },
+    Module(String),
+    ForeignDeclarations(Vec<Spanned<ForeignDeclaration>>),
+    Use(String),
 }
 
 fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned<Var>>> {
@@ -503,6 +549,36 @@ fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned
 impl Parseable for Declaration {
     fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
         match parser.peek_next() {
+            Some((Token::Keyword(Keyword::Module), _)) => {
+                let mod_span = parser.expect_kw_kind(Keyword::Module)?;
+                let (name, name_span) = parser.expect_ident()?;
+                let _ = parser.expect_next(Token::SemiColon)?;
+                let span = mod_span.start..name_span.end;
+                Ok((Declaration::Module(name), span))
+            }
+            Some((Token::Keyword(Keyword::Foreign), _)) => {
+                let _foreign_span = parser.expect_kw_kind(Keyword::Foreign)?;
+                let _lbrace = parser.expect_next(Token::LBrace)?;
+
+                let mut foreign_decls = vec![];
+                while parser.peek_next().is_some() {
+                    if let Some((Token::RBrace, _)) = parser.peek_next() {
+                        break;
+                    }
+                    foreign_decls.push(ForeignDeclaration::parse(parser)?);
+                }
+
+                let _rbrace = parser.expect_next(Token::RBrace)?;
+                let span = _foreign_span.start.._rbrace.1.end;
+                Ok((Declaration::ForeignDeclarations(foreign_decls), span))
+            }
+            Some((Token::Keyword(Keyword::Use), use_span)) => {
+                let _use_span = parser.expect_kw_kind(Keyword::Use)?;
+                let (name, name_span) = parser.expect_ident()?;
+                let _semi = parser.expect_next(Token::SemiColon)?;
+                let span = use_span.start..name_span.end;
+                Ok((Declaration::Use(name), span))
+            }
             Some((Token::Keyword(Keyword::Fn), _)) => {
                 let start_span = parser.expect_kw_kind(Keyword::Fn)?;
                 let (name, _) = parser.expect_ident()?;

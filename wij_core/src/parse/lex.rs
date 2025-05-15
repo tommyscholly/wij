@@ -46,7 +46,6 @@ pub type LexResult<T> = Result<T, LexError>;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Keyword {
     Let,
-    Int,
     Fn,
     Type,
     If,
@@ -57,7 +56,15 @@ pub enum Keyword {
     Return,
     True,
     False,
+    Foreign,
+    Use,
+    Pub,
+    Module,
+
+    Int,
+    Str,
     Bool,
+    Byte,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -78,6 +85,12 @@ impl TryFrom<&str> for Keyword {
             "true" => Ok(Keyword::True),
             "false" => Ok(Keyword::False),
             "bool" => Ok(Keyword::Bool),
+            "foreign" => Ok(Keyword::Foreign),
+            "use" => Ok(Keyword::Use),
+            "pub" => Ok(Keyword::Pub),
+            "module" => Ok(Keyword::Module),
+            "str" => Ok(Keyword::Str),
+            "byte" => Ok(Keyword::Byte),
             _ => Err(()),
         }
     }
@@ -102,6 +115,8 @@ pub enum Token {
     Colon,
     Arrow,
     Bar,
+    Star,
+    Dot,
 }
 
 impl TryFrom<&str> for BinOp {
@@ -168,6 +183,9 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                 ']' => {
                     advance_single_token!(self, Token::RBracket)
                 }
+                '*' => {
+                    advance_single_token!(self, Token::Star)
+                }
                 ',' => {
                     advance_single_token!(self, Token::Comma)
                 }
@@ -176,6 +194,9 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                 }
                 '=' => {
                     handle_operator!(self, '=', '=', Token::Eq, Token::BinOp(BinOp::EqEq))
+                }
+                '.' => {
+                    advance_single_token!(self, Token::Dot)
                 }
                 '>' => {
                     handle_operator!(
@@ -237,7 +258,7 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                         let token = self.next_number();
                         self.start = self.current;
                         return token;
-                    } else if c.is_alphabetic() {
+                    } else if c.is_alphabetic() || *c == '_' {
                         let token = self.next_kw_var();
                         self.start = self.current;
                         return token;
@@ -282,7 +303,7 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
     fn next_kw_var(&mut self) -> Result<Spanned<Token>, LexError> {
         let mut kw_var = String::new();
         while let Some(c) = self.chars.peek() {
-            if c.is_alphanumeric() {
+            if c.is_alphanumeric() || *c == '_' {
                 kw_var.push(*c);
                 self.chars.next();
                 self.current += 1;

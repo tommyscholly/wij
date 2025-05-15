@@ -11,6 +11,8 @@ pub enum TypeErrorKind {
     UndefinedType(String),
     UndefinedFunction(String),
     IdentUsedAsFn(String),
+    DuplicateModule,
+    ModuleNotFound,
     FunctionArityMismatch {
         expected: u32,
         found: u32,
@@ -49,6 +51,8 @@ impl Display for TypeErrorKind {
                 "Incompatible types for operation `{}`: {} and {}",
                 operation, lhs, rhs
             ),
+            DuplicateModule => write!(f, "Duplicate module"),
+            ModuleNotFound => write!(f, "Module not found"),
         }
     }
 }
@@ -80,8 +84,8 @@ pub type VarId = u32;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct FunctionSignature {
-    param_types: Vec<Type>,
-    ret_type: Type,
+    pub param_types: Vec<Type>,
+    pub ret_type: Type,
 }
 
 impl Display for FunctionSignature {
@@ -171,6 +175,7 @@ pub enum DeclKind {
         name: String,
         variants: Vec<EnumVariant>,
     },
+    ForeignDeclarations(Vec<FunctionSignature>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -180,7 +185,13 @@ pub struct TypedDecl {
     pub span: Span,
 }
 
-#[derive(Default)]
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Module {
+    pub name: String,
+    pub decls: Vec<TypedDecl>,
+}
+
+#[derive(Default, Clone, Debug)]
 pub struct TyCtx {
     var_id_map: HashMap<String, VarId>,
     var_id_type: HashMap<VarId, Type>,
@@ -193,9 +204,8 @@ impl TyCtx {
         TyCtx::default()
     }
 
-    fn var_id(&self, name: &str) -> VarId {
-        assert!(self.var_id_map.contains_key(name));
-        *self.var_id_map.get(name).unwrap()
+    fn var_id(&self, name: &str) -> Option<&VarId> {
+        self.var_id_map.get(name)
     }
 
     fn var_ty(&self, id: VarId) -> &Type {
@@ -212,10 +222,77 @@ impl TyCtx {
     }
 }
 
-fn type_var(ctx: &mut TyCtx, var: Spanned<Var>) -> TypeResult<TypedVar> {
+#[derive(Debug, Clone)]
+pub struct ScopedCtx<'a> {
+    ctx: TyCtx,
+    parent: Option<&'a ScopedCtx<'a>>,
+}
+
+impl<'a> ScopedCtx<'a> {
+    fn new() -> ScopedCtx<'a> {
+        ScopedCtx {
+            ctx: TyCtx::new(),
+            parent: None,
+        }
+    }
+
+    fn from_tyctx(ctx: TyCtx) -> ScopedCtx<'a> {
+        ScopedCtx { ctx, parent: None }
+    }
+
+    fn child(&'a self) -> ScopedCtx<'a> {
+        ScopedCtx {
+            ctx: TyCtx::new(),
+            parent: Some(self),
+        }
+    }
+
+    fn var_id(&self, name: &str) -> Option<&VarId> {
+        match self.ctx.var_id_map.get(name) {
+            Some(id) => Some(id),
+            None => match self.parent {
+                Some(parent) => parent.var_id(name),
+                None => None,
+            },
+        }
+    }
+
+    fn var_ty(&self, id: VarId) -> &Type {
+        match self.ctx.var_id_type.get(&id) {
+            Some(ty) => ty,
+            None => match self.parent {
+                Some(parent) => parent.var_ty(id),
+                None => panic!("var not found: {}", id),
+            },
+        }
+    }
+
+    fn insert_var(&mut self, name: String, ty: Type) -> VarId {
+        let id = self.ctx.var_id_map.len() as VarId;
+        self.ctx.var_id_map.insert(name, id);
+        self.ctx.var_id_type.insert(id, ty);
+
+        id
+    }
+
+    fn get_user_def_type(&self, name: &str) -> Option<Type> {
+        match self.ctx.get_user_def_type(name) {
+            Some(ty) => Some(ty),
+            None => match self.parent {
+                Some(parent) => parent.get_user_def_type(name),
+                None => None,
+            },
+        }
+    }
+
+    fn insert_user_def_type(&mut self, name: String, ty: Type) {
+        self.ctx.user_def_types.insert(name, ty);
+    }
+}
+
+fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>) -> TypeResult<TypedVar> {
     let (var, span) = var;
-    let id = ctx.var_id_map.len() as VarId;
-    ctx.var_id_map.insert(var.name.clone(), id);
+    let id = ctx.insert_var(var.name.clone(), var.ty.clone());
     Ok(TypedVar {
         id,
         ty: var.ty,
@@ -223,19 +300,27 @@ fn type_var(ctx: &mut TyCtx, var: Spanned<Var>) -> TypeResult<TypedVar> {
     })
 }
 
-fn type_expr(ctx: &mut TyCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpression> {
+fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpression> {
     let expr = match expr.0 {
         Expression::Literal(lit) => TypedExpression {
             ty: match lit {
                 Literal::Int(_) => Type::Int,
                 Literal::Bool(_) => Type::Bool,
-                Literal::String(_) => Type::String,
+                Literal::Str(_) => Type::Str,
             },
             kind: ExpressionKind::Literal(lit),
             span: expr.1,
         },
         Expression::Ident(ident) => TypedExpression {
-            ty: ctx.var_ty(ctx.var_id(&ident)).clone(),
+            ty: match ctx.var_id(&ident) {
+                Some(id) => ctx.var_ty(*id).clone(),
+                None => {
+                    return Err(TypeError::new(
+                        TypeErrorKind::UndefinedVariable(ident),
+                        expr.1,
+                    ));
+                }
+            },
             kind: ExpressionKind::Ident(ident),
             span: expr.1,
         },
@@ -297,7 +382,7 @@ fn type_expr(ctx: &mut TyCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpr
                 Some(t) => t,
             };
 
-            if let Type::Fn(fn_) = fn_type {
+            let ret_ty = if let Type::Fn(fn_) = fn_type {
                 let FunctionSignature {
                     param_types,
                     ret_type,
@@ -325,13 +410,14 @@ fn type_expr(ctx: &mut TyCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpr
                         ));
                     }
                 }
+                ret_type
             } else {
                 return Err(TypeError::new(TypeErrorKind::IdentUsedAsFn(name), expr.1));
-            }
+            };
 
             TypedExpression {
                 kind: ExpressionKind::FnCall(name, ty_args),
-                ty: Type::Unit,
+                ty: ret_ty,
                 span: expr.1,
             }
         }
@@ -340,7 +426,7 @@ fn type_expr(ctx: &mut TyCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpr
     Ok(expr)
 }
 
-fn type_stmt(ctx: &mut TyCtx, stmt: Spanned<Statement>) -> TypeResult<TypedStatement> {
+fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedStatement> {
     let stmt = match stmt.0 {
         Statement::Let { var, value } => {
             let val = if let Some(expr) = value {
@@ -373,8 +459,9 @@ fn type_stmt(ctx: &mut TyCtx, stmt: Spanned<Statement>) -> TypeResult<TypedState
         }
         Statement::Block(stmts) => {
             let mut ty_stmts = vec![];
+            let mut child_ctx = ctx.child();
             for stmt in stmts {
-                ty_stmts.push(type_stmt(ctx, stmt)?);
+                ty_stmts.push(type_stmt(&mut child_ctx, stmt)?);
             }
 
             TypedStatement {
@@ -388,16 +475,19 @@ fn type_stmt(ctx: &mut TyCtx, stmt: Spanned<Statement>) -> TypeResult<TypedState
             then_block,
             else_block,
         } => {
+            let mut else_ctx = ctx.child();
             let else_block = if let Some(stmt) = else_block {
-                Some(Box::new(type_stmt(ctx, *stmt)?))
+                Some(Box::new(type_stmt(&mut else_ctx, *stmt)?))
             } else {
                 None
             };
 
+            let mut then_ctx = ctx.child();
+            let then_block = Box::new(type_stmt(&mut then_ctx, *then_block)?);
             TypedStatement {
                 kind: StatementKind::If {
                     condition: type_expr(ctx, condition)?,
-                    then_block: Box::new(type_stmt(ctx, *then_block)?),
+                    then_block,
                     else_block,
                 },
                 ty: Type::Unit,
@@ -419,7 +509,7 @@ fn type_stmt(ctx: &mut TyCtx, stmt: Spanned<Statement>) -> TypeResult<TypedState
     Ok(stmt)
 }
 
-pub fn type_decl(ctx: &mut TyCtx, decl: Spanned<Declaration>) -> TypeResult<TypedDecl> {
+pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<TypedDecl> {
     let decl = match decl.0 {
         Declaration::Function {
             name,
@@ -427,9 +517,10 @@ pub fn type_decl(ctx: &mut TyCtx, decl: Spanned<Declaration>) -> TypeResult<Type
             body,
             ret_type,
         } => {
+            let mut body_ctx = ctx.child();
             let mut args = vec![];
             for var in arguments {
-                args.push(type_var(ctx, var)?);
+                args.push(type_var(&mut body_ctx, var)?);
             }
 
             TypedDecl {
@@ -439,7 +530,7 @@ pub fn type_decl(ctx: &mut TyCtx, decl: Spanned<Declaration>) -> TypeResult<Type
                 kind: DeclKind::Function {
                     name,
                     arguments: args,
-                    body: type_stmt(ctx, body)?,
+                    body: type_stmt(&mut body_ctx, body)?,
                     ret_type,
                 },
                 span: decl.1,
@@ -475,6 +566,23 @@ pub fn type_decl(ctx: &mut TyCtx, decl: Spanned<Declaration>) -> TypeResult<Type
                 span: decl.1,
             }
         }
+        Declaration::Module(_) => unreachable!(),
+        Declaration::ForeignDeclarations(fds) => {
+            let mut ty_fds = vec![];
+            for (fd, _) in fds {
+                let name = fd.name;
+                let sig = fd.sig;
+                ctx.insert_user_def_type(name, Type::Fn(Box::new(sig.clone())));
+                ty_fds.push(sig);
+            }
+
+            TypedDecl {
+                ty: Type::Unit,
+                kind: DeclKind::ForeignDeclarations(ty_fds),
+                span: decl.1,
+            }
+        }
+        Declaration::Use(_) => todo!(),
     };
 
     Ok(decl)
@@ -518,16 +626,63 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>) {
     }
 }
 
-pub fn type_check(decls: Vec<Spanned<Declaration>>) -> TypeResult<Vec<TypedDecl>> {
+// Filters decls into decls, modules and uses
+// Should only ever be one module
+fn extract_module_uses(
+    decls: Vec<Spanned<Declaration>>,
+) -> TypeResult<(Module, Vec<Spanned<Declaration>>)> {
+    let mut filt_decls: Vec<Spanned<Declaration>> = vec![];
+    let mut modules = vec![];
+    let mut uses = vec![];
+    for decl in decls {
+        match decl.0 {
+            Declaration::Module(name) => {
+                modules.push((name, decl.1));
+            }
+            Declaration::Use(name) => {
+                uses.push((name, decl.1));
+            }
+            _ => {
+                filt_decls.push(decl);
+            }
+        }
+    }
+
+    if modules.len() > 1 {
+        return Err(TypeError::new(
+            TypeErrorKind::DuplicateModule,
+            modules[0].1.start..modules[1].1.end,
+        ));
+    } else if modules.is_empty() {
+        return Err(TypeError::new(
+            TypeErrorKind::ModuleNotFound,
+            Span::default(),
+        ));
+    }
+
+    let module = Module {
+        name: modules[0].0.clone(),
+        decls: vec![],
+    };
+
+    Ok((module, filt_decls))
+}
+
+pub fn type_check(decls: Vec<Spanned<Declaration>>) -> TypeResult<Module> {
     let mut ctx = TyCtx::new();
+
+    let (mut module, decls) = extract_module_uses(decls)?;
 
     register_types(&mut ctx, &decls);
 
+    let mut ctx = ScopedCtx::from_tyctx(ctx);
     let mut ty_decls = vec![];
     for decl in decls {
         let ty_decl = type_decl(&mut ctx, decl)?;
         ty_decls.push(ty_decl);
     }
 
-    Ok(ty_decls)
+    module.decls = ty_decls;
+
+    Ok(module)
 }

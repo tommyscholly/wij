@@ -1,0 +1,13 @@
+module fmt;
+
+use core:strings;
+
+foreign {
+    write: fn(fd: int, data: *[byte], count: int) -> int;
+    read: fn(fd: int, data: *[byte], count: int) -> int;
+}
+
+fn println(msg: str) {
+    write(1, msg, msg.length());
+    write(1, "\n", 1);
+}
