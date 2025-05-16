@@ -11,4 +11,5 @@ pub use parse::lex::tokenize;
 pub trait AstError {
     fn span(&self) -> Option<ast::Span>;
     fn reason(&self) -> String;
+    fn notes(&self) -> Vec<(String, ast::Span)>;
 }

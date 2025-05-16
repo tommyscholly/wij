@@ -21,19 +21,32 @@ struct Options {
 fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl AstError) {
     let mut colors = ColorGenerator::new();
 
-    let a = colors.next();
-
     let span = match e.span() {
         Some(span) => span,
         None => 0..0,
     };
-    Report::build(ReportKind::Error, (file, span.clone()))
-        .with_message(top_level_msg)
-        .with_label(
+    let mut report =
+        Report::build(ReportKind::Error, (file, span.clone())).with_message(top_level_msg);
+
+    if e.notes().is_empty() {
+        report = report.with_label(
             Label::new((file, span))
                 .with_message(e.reason())
-                .with_color(a),
-        )
+                .with_color(colors.next()),
+        );
+    } else {
+        report = report.with_note(e.reason());
+    }
+
+    for (msg, span) in e.notes() {
+        report = report.with_label(
+            Label::new((file, span))
+                .with_message(msg)
+                .with_color(colors.next()),
+        );
+    }
+
+    report
         .finish()
         .print((file, Source::from(contents)))
         .unwrap();

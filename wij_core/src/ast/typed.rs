@@ -1,7 +1,10 @@
 #![allow(unused)]
 use std::{collections::HashMap, fmt::Display};
 
-use crate::{AstError, ast::Type};
+use crate::{
+    AstError,
+    ast::{self, Type},
+};
 
 use super::{BinOp, Declaration, Expression, Literal, Path, Span, Spanned, Statement, Var};
 
@@ -14,6 +17,7 @@ pub enum TypeErrorKind {
     IdentUsedAsFn(String),
     DuplicateModule,
     ModuleNotFound,
+    InvalidType(Type),
     FunctionArityMismatch {
         expected: u32,
         found: u32,
@@ -33,6 +37,7 @@ impl Display for TypeErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use TypeErrorKind::*;
         match self {
+            InvalidType(ty) => write!(f, "Invalid type `{}`", ty),
             UndefinedVariable(ident) => write!(f, "Undefined variable `{}`", ident),
             UndefinedType(ident) => write!(f, "Undefined type `{}`", ident),
             UndefinedFunction(ident) => write!(f, "Undefined function `{}`", ident),
@@ -61,12 +66,22 @@ impl Display for TypeErrorKind {
 
 pub struct TypeError {
     kind: TypeErrorKind,
+    notes: Vec<(String, Span)>,
     span: Span,
 }
 
 impl TypeError {
     pub fn new(kind: TypeErrorKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            notes: Vec::new(),
+        }
+    }
+
+    pub fn add_note(mut self, note: String, span: Span) -> Self {
+        self.notes.push((note, span));
+        self
     }
 }
 
@@ -77,6 +92,10 @@ impl AstError for TypeError {
 
     fn reason(&self) -> String {
         self.kind.to_string()
+    }
+
+    fn notes(&self) -> Vec<(String, Span)> {
+        self.notes.clone()
     }
 }
 
@@ -148,6 +167,7 @@ pub enum ExpressionKind {
     BinOp(BinOp, Box<TypedExpression>, Box<TypedExpression>),
     FnCall(String, Vec<TypedExpression>),
     RecordInit(String, Vec<(String, TypedExpression)>),
+    DataConstructor(String, Option<Box<TypedExpression>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -230,6 +250,7 @@ pub struct TyCtx {
     var_id_map: HashMap<String, VarId>,
     var_id_type: HashMap<VarId, Type>,
     user_def_types: HashMap<String, Type>,
+    data_constructors: HashMap<String, Option<Type>>,
     decls: Vec<TypedDecl>,
 }
 
@@ -253,6 +274,10 @@ impl TyCtx {
 
     fn get_user_def_type(&self, name: &str) -> Option<Type> {
         self.user_def_types.get(name).cloned()
+    }
+
+    fn insert_data_constructor(&mut self, name: String, ty: Option<Type>) {
+        self.data_constructors.insert(name, ty);
     }
 }
 
@@ -322,14 +347,47 @@ impl<'a> ScopedCtx<'a> {
     fn insert_user_def_type(&mut self, name: String, ty: Type) {
         self.ctx.user_def_types.insert(name, ty);
     }
+
+    fn resolve_type(&self, ty: Type) -> Type {
+        if let Type::UserDef(name) = &ty {
+            return match self.get_user_def_type(name) {
+                Some(ty) => ty,
+                None => match self.parent {
+                    Some(parent) => parent.resolve_type(ty),
+                    None => ty,
+                },
+            };
+        }
+
+        ty
+    }
 }
 
-fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>) -> TypeResult<TypedVar> {
-    let (var, span) = var;
-    let id = ctx.insert_var(var.name.clone(), var.ty.clone());
+fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>, inferred_ty: Type) -> TypeResult<TypedVar> {
+    let (mut var, span) = var;
+    match (&var.ty, inferred_ty) {
+        (Some(ty), ity) => {
+            let ty = ctx.resolve_type(ty.clone());
+            let ity = ctx.resolve_type(ity);
+            if ty != ity {
+                return Err(TypeError::new(
+                    TypeErrorKind::TypeMismatch {
+                        expected: ty.clone(),
+                        found: ity.clone(),
+                    },
+                    span,
+                ));
+            }
+        }
+        (None, ty) => {
+            var.ty = Some(ty);
+        }
+    };
+
+    let id = ctx.insert_var(var.name.clone(), var.ty.clone().unwrap());
     Ok(TypedVar {
         id,
-        ty: var.ty,
+        ty: var.ty.unwrap(),
         span,
     })
 }
@@ -480,11 +538,66 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
         Expression::FieldAccess(expr, field_name) => {
             let expr_span = expr.1.clone();
             let ty_expr = type_expr(ctx, *expr)?;
+            println!("ty: {:?}", ty_expr.ty);
+            let ty = if let Type::UserDef(name) = &ty_expr.ty {
+                &ctx.get_user_def_type(name)
+                    .expect("userdef types should have been registered")
+            } else {
+                &ty_expr.ty
+            };
+            let field_ty = if let Type::Record(fields) = ty {
+                println!("fields: {:?}", fields);
+                fields.iter().find_map(|(var, ty)| {
+                    if *var == field_name {
+                        Some(ty.clone())
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            if field_ty.is_none() {
+                let mut err = TypeError::new(
+                    TypeErrorKind::InvalidType(ty_expr.ty.clone()),
+                    expr_span.clone(),
+                )
+                .add_note(
+                    format!("Cannot access field {field_name} on type {}", ty_expr.ty),
+                    expr_span,
+                );
+                return Err(err);
+            }
             TypedExpression {
-                // todo: this is wrong
-                ty: ty_expr.ty.clone(),
+                ty: field_ty.unwrap(),
                 kind: ExpressionKind::FieldAccess(Box::new(ty_expr), field_name),
                 span: expr_span,
+            }
+        }
+        Expression::DataConstruction(construct_name, data) => {
+            let (dacon_ty, enum_ty) = match ctx.get_user_def_type(&construct_name) {
+                Some(Type::DataConstructor(dacon, data, ty_name)) => (
+                    Type::DataConstructor(dacon, data, ty_name.clone()),
+                    Type::UserDef(ty_name),
+                ),
+                _ => {
+                    return Err(TypeError::new(
+                        TypeErrorKind::UndefinedType(construct_name),
+                        expr.1,
+                    ));
+                }
+            };
+
+            let data = if let Some(data) = data {
+                Some(Box::new(type_expr(ctx, *data)?))
+            } else {
+                None
+            };
+
+            TypedExpression {
+                kind: ExpressionKind::DataConstructor(construct_name, data),
+                ty: enum_ty,
+                span: expr.1,
             }
         }
     };
@@ -499,13 +612,16 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
             let ty_rhs = type_expr(ctx, *rhs)?;
 
             if ty_lhs.ty != ty_rhs.ty {
-                return Err(TypeError::new(
+                let mut err = TypeError::new(
                     TypeErrorKind::TypeMismatch {
-                        expected: ty_lhs.ty,
-                        found: ty_rhs.ty,
+                        expected: ty_lhs.ty.clone(),
+                        found: ty_rhs.ty.clone(),
                     },
                     stmt.1,
-                ));
+                )
+                .add_note(format!("This has type {}", ty_lhs.ty), ty_lhs.span)
+                .add_note(format!("This has type {}", ty_rhs.ty), ty_rhs.span);
+                return Err(err);
             }
 
             if !matches!(
@@ -522,15 +638,37 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
             }
         }
         Statement::Let { var, value } => {
-            let val = if let Some(expr) = value {
-                Some(type_expr(ctx, expr)?)
+            // TODO: cleanup these clones
+            let (val, inferred_ty) = if let Some(expr) = value {
+                let ty_expr = type_expr(ctx, expr)?;
+                let inferred_ty = ty_expr.ty.clone();
+                (Some(ty_expr), inferred_ty)
             } else {
-                None
+                (None, Type::Any)
+            };
+
+            let var_ty = var.0.ty.clone();
+            let ty_var = match type_var(ctx, var, inferred_ty) {
+                Ok(ty_var) => ty_var,
+                Err(err) => match val {
+                    Some(val) => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::TypeMismatch {
+                                expected: var_ty.clone().unwrap(),
+                                found: val.ty.clone(),
+                            },
+                            stmt.1,
+                        )
+                        .add_note(format!("This has type {}", var_ty.unwrap()), err.span)
+                        .add_note(format!("This has type {}", val.ty), val.span));
+                    }
+                    None => return Err(err),
+                },
             };
 
             TypedStatement {
                 kind: StatementKind::Let {
-                    var: type_var(ctx, var)?,
+                    var: ty_var,
                     value: val,
                 },
                 ty: Type::Unit,
@@ -613,7 +751,8 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
             let mut body_ctx = ctx.child();
             let mut args = vec![];
             for var in arguments {
-                args.push(type_var(&mut body_ctx, var)?);
+                let ity = var.0.ty.clone().unwrap();
+                args.push(type_var(&mut body_ctx, var, ity)?);
             }
 
             TypedDecl {
@@ -651,7 +790,7 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
         Declaration::Record { name, fields } => {
             let fields: Vec<(String, Type)> = fields
                 .into_iter()
-                .map(|(var, _)| (var.name, var.ty))
+                .map(|(var, _)| (var.name, var.ty.unwrap()))
                 .collect();
 
             TypedDecl {
@@ -697,13 +836,23 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
             Declaration::Record { name, fields } => {
                 let fields: Vec<(String, Type)> = fields
                     .iter()
-                    .map(|(var, _)| (var.name.clone(), var.ty.clone()))
+                    .map(|(var, _)| (var.name.clone(), var.ty.clone().unwrap()))
                     .collect();
                 let type_ = Type::Record(fields);
                 ctx.insert_user_def_type(name.to_string(), type_);
             }
-            Declaration::Enum { name, .. } => {
-                // todo!()
+            Declaration::Enum {
+                name: enum_name,
+                variants,
+            } => {
+                for (variant, _) in variants {
+                    let ast::EnumVariant { name, data, .. } = variant;
+                    let data = data.as_ref().map(|data| Box::new(data.0.clone()));
+                    ctx.insert_user_def_type(
+                        name.to_string(),
+                        Type::DataConstructor(name.to_string(), data, enum_name.to_string()),
+                    );
+                }
             }
             _ => {}
         }
@@ -729,7 +878,10 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
             _ => continue,
         };
 
-        let param_types: Vec<Type> = arguments.iter().map(|(var, _)| var.ty.clone()).collect();
+        let param_types: Vec<Type> = arguments
+            .iter()
+            .map(|(var, _)| var.ty.clone().unwrap())
+            .collect();
 
         let ret_type = ret_type.clone().unwrap_or(Type::Unit);
         let signature = FunctionSignature {

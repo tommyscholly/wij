@@ -38,6 +38,12 @@ pub enum ParseErrorKind {
     InvalidVisibility,
 }
 
+impl Display for ParseErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(Debug)]
 pub struct ParseError {
     pub kind: ParseErrorKind,
@@ -77,7 +83,14 @@ impl AstError for ParseError {
     }
 
     fn reason(&self) -> String {
-        self.reason.clone().unwrap_or_default()
+        match &self.reason {
+            Some(reason) => reason.to_string(),
+            None => self.kind.to_string(),
+        }
+    }
+
+    fn notes(&self) -> Vec<(String, self::Span)> {
+        Vec::new()
     }
 }
 
@@ -93,22 +106,22 @@ where
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Var {
     pub name: String,
-    pub ty: Type,
+    pub ty: Option<Type>,
 }
 
 impl Parseable for Var {
     fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
         let (name, span) = parser.expect_ident()?;
 
-        let Some((Token::Colon, _)) = parser.pop_next() else {
-            return Err(ParseError::with_reason(
-                ParseErrorKind::MalformedVariable,
-                span,
-                "Expected type",
-            ));
+        let (ty, ty_span_end) = if let Some((Token::Colon, _)) = parser.peek_next() {
+            parser.pop_next();
+            let (ty, ty_span) = Type::parse(parser)?;
+            (Some(ty), ty_span.end)
+        } else {
+            (None, span.end)
         };
-        let (ty, ty_span) = Type::parse(parser)?;
-        let span = span.start..ty_span.end;
+
+        let span = span.start..ty_span_end;
         Ok((Var { name, ty }, span))
     }
 }
@@ -353,6 +366,7 @@ pub enum Expression {
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     FnCall(String, Vec<Spanned<Expression>>),
     RecordInit(String, Vec<(String, Spanned<Expression>)>),
+    DataConstruction(String, Option<Box<Spanned<Expression>>>),
 }
 
 fn parse_record_assignments(
@@ -432,7 +446,22 @@ impl Expression {
                     let full_span = span.start..rbrace_span.end;
                     (Expression::RecordInit(ident, assignments), full_span)
                 }
-                _ => (Expression::Ident(ident), span),
+                _ => {
+                    let mut try_parser = parser.clone();
+                    match Expression::parse(&mut try_parser) {
+                        Ok((e, e_span)) => {
+                            parser.replace(try_parser);
+                            (
+                                Expression::DataConstruction(
+                                    ident,
+                                    Some(Box::new((e, e_span.clone()))),
+                                ),
+                                span.start..e_span.end,
+                            )
+                        }
+                        Err(_) => (Expression::Ident(ident), span),
+                    }
+                }
             },
             Some((Token::LParen, lparen_span)) => {
                 // handle parenthesized expressions
@@ -546,7 +575,10 @@ impl Parseable for ForeignDeclaration {
         };
         let _semi = parser.expect_next(Token::SemiColon)?;
 
-        let param_types = args.iter().map(|(arg, _)| arg.ty.clone()).collect();
+        let param_types = args
+            .iter()
+            .map(|(arg, _)| arg.ty.clone().unwrap())
+            .collect();
         let ret_type = match ret_type {
             Some(t) => t,
             None => Type::Unit,
@@ -606,7 +638,15 @@ fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned
                 break;
             }
         }
-        vars.push(Var::parse(parser)?);
+        let var = Var::parse(parser)?;
+        if var.0.ty.is_none() {
+            return Err(ParseError::with_reason(
+                ParseErrorKind::MalformedType,
+                var.1.clone(),
+                "Expected type annotation",
+            ));
+        }
+        vars.push(var);
         if let Some((Token::Comma, _)) = parser.peek_next() {
             parser.pop_next();
         } else if let Some((lt, _)) = parser.peek_next() {
@@ -807,6 +847,7 @@ impl Parseable for Declaration {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Parser {
     tokens: VecDeque<Spanned<Token>>,
 }
@@ -814,6 +855,10 @@ pub struct Parser {
 impl Parser {
     pub fn new(tokens: VecDeque<Spanned<Token>>) -> Self {
         Self { tokens }
+    }
+
+    fn replace(&mut self, other: Parser) {
+        self.tokens = other.tokens;
     }
 
     fn has_next(&self) -> bool {

@@ -39,6 +39,10 @@ impl AstError for LexError {
             LexErrorKind::UnexpectedEOF => "Unexpected end of input".to_string(),
         }
     }
+
+    fn notes(&self) -> Vec<(String, crate::ast::Span)> {
+        Vec::new()
+    }
 }
 
 pub type LexResult<T> = Result<T, LexError>;

@@ -22,7 +22,9 @@ fn main() {
 
     let t: Test = Test { x = 1 };
 
+    let c: Color = Blue 1;
+
     x = 1;
     t.x = 2;
-    println(y);
+    println(int_to_string(y));
 }

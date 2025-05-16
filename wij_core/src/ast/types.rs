@@ -18,12 +18,15 @@ pub enum Type {
     Fn(Box<FunctionSignature>),
     UserDef(String),
     Record(Vec<(String, Type)>),
+    DataConstructor(String, Option<Box<Type>>, String),
+    // compiler generated
+    Any,
     Unit,
 }
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use Type::{Array, Bool, Byte, Fn, Int, Ptr, Record, Str, Tuple, Unit, UserDef};
+        use Type::*;
         match self {
             Int => write!(f, "int"),
             Bool => write!(f, "bool"),
@@ -42,16 +45,24 @@ impl Display for Type {
             UserDef(ident) => write!(f, "{}", ident),
             Record(fields) => write!(
                 f,
-                "Record({})",
+                "Record {{{}}}",
                 fields
                     .iter()
                     .map(|(name, ty)| format!("{}: {}", name, ty))
                     .collect::<Vec<String>>()
                     .join(", ")
             ),
+            DataConstructor(ident, data, _) => {
+                if let Some(data) = data {
+                    write!(f, "{}({})", ident, data)
+                } else {
+                    write!(f, "{}", ident)
+                }
+            }
             Unit => write!(f, "()"),
             Ptr(t) => write!(f, "*{}", t),
             Byte => write!(f, "byte"),
+            Any => write!(f, "any"),
         }
     }
 }
