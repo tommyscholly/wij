@@ -58,6 +58,7 @@ pub enum Keyword {
     Else,
     Match,
     For,
+    While,
     In,
     Return,
     True,
