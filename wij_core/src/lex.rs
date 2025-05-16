@@ -1,3 +1,5 @@
+mod macros;
+
 use std::iter::Peekable;
 
 use crate::AstError;
@@ -343,3 +345,6 @@ pub fn tokenize(src: &str) -> Lexer<impl Iterator<Item = LexItem>> {
     let chars = src.chars();
     Lexer::new(chars)
 }
+
+#[cfg(test)]
+mod tests;

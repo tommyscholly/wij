@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::parse::{Token, lex::Keyword};
+use crate::lex::{Keyword, Token};
 
 use super::{
     BinOp, ParseError, ParseErrorKind, Parseable, Parser, Spanned, typed::FunctionSignature,

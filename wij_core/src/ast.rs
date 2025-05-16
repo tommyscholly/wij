@@ -4,8 +4,9 @@ mod types;
 pub mod use_analysis;
 
 use crate::{
-    AstError, match_optional_token,
-    parse::{Token, lex::Keyword},
+    AstError,
+    lex::{Keyword, Token},
+    match_optional_token,
 };
 
 use typed::FunctionSignature;
