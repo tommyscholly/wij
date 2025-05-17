@@ -5,16 +5,12 @@ type StringData = {
     length: int
 }
 
-foreign {
-    __compiler_intrinsic_str_data: fn(s: str) -> StringData;
-}
+procs str {
+    pub fn len() -> int {
 
-pub fn strlen(s: str) -> int {
-    let data: StringData = __compiler_intrinsic_str_data(s);
-    return data.length;
-}
+    }
 
-pub fn strbytes(s: str) -> *[byte] {
-    let data: StringData = __compiler_intrinsic_str_data(s);
-    return data.buffer;
+    pub fn bytes() -> *[byte] {
+
+    }
 }

@@ -13,12 +13,12 @@ fn test_parse_fn() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "main".to_string(),
             arguments: vec![],
             body: (Statement::Block(vec![]), 10..11),
             ret_type: None,
-        },
+        }),
         0..11,
     )];
     assert_eq!(decls.len(), 1);
@@ -38,7 +38,7 @@ fn test_parse_fn_with_params_and_body() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "main".to_string(),
             arguments: vec![
                 (
@@ -73,7 +73,7 @@ fn test_parse_fn_with_params_and_body() {
                 24..52,
             ),
             ret_type: None,
-        },
+        }),
         0..52,
     )];
     assert_eq!(decls.len(), 1);
@@ -91,7 +91,7 @@ fn test_return_fn() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "main".to_string(),
             arguments: vec![],
             body: (
@@ -102,7 +102,7 @@ fn test_return_fn() {
                 10..19,
             ),
             ret_type: None,
-        },
+        }),
         0..19,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -121,7 +121,7 @@ fn test_if_else() {
         .collect::<Vec<Spanned<Declaration>>>();
 
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "main".to_string(),
             arguments: vec![],
             body: (
@@ -148,7 +148,7 @@ fn test_if_else() {
                 10..46,
             ),
             ret_type: None,
-        },
+        }),
         0..46,
     )];
 
@@ -231,7 +231,7 @@ fn test_fn_call() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "main".to_string(),
             arguments: vec![],
             body: (
@@ -260,7 +260,7 @@ fn test_fn_call() {
                 10..34,
             ),
             ret_type: None,
-        },
+        }),
         0..34,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -278,7 +278,7 @@ fn test_fn_call_as_stmt() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "main".to_string(),
             arguments: vec![],
             body: (
@@ -298,7 +298,7 @@ fn test_fn_call_as_stmt() {
                 10..21,
             ),
             ret_type: None,
-        },
+        }),
         0..21,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -316,7 +316,7 @@ fn test_bin_op_precedence() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "main".to_string(),
             arguments: vec![],
             body: (
@@ -341,7 +341,7 @@ fn test_bin_op_precedence() {
                 10..28,
             ),
             ret_type: None,
-        },
+        }),
         0..28,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -387,7 +387,7 @@ fn test_bool_fn() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "test".to_string(),
             arguments: vec![],
             body: (
@@ -398,7 +398,7 @@ fn test_bool_fn() {
                 18..31,
             ),
             ret_type: Some(Type::Bool),
-        },
+        }),
         0..31,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -423,7 +423,7 @@ fn test_field_access() {
     );
 
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "get_age".to_string(),
             arguments: vec![],
             body: (
@@ -431,7 +431,7 @@ fn test_field_access() {
                 20..39,
             ),
             ret_type: Some(Type::Int),
-        },
+        }),
         0..39,
     )];
 
@@ -461,7 +461,7 @@ fn test_chained_field_access() {
     );
 
     let expected = vec![(
-        Declaration::Function {
+        Declaration::Function(Function {
             name: "get_city".to_string(),
             arguments: vec![],
             body: (
@@ -469,7 +469,7 @@ fn test_chained_field_access() {
                 21..47,
             ),
             ret_type: Some(Type::Str),
-        },
+        }),
         0..47,
     )];
 

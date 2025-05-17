@@ -5,7 +5,7 @@ use crate::{
     ast::{self, Type},
 };
 
-use super::{BinOp, Declaration, Expression, Literal, Span, Spanned, Statement, Var};
+use super::{BinOp, Declaration, Expression, Function, Literal, Span, Spanned, Statement, Var};
 
 #[derive(Debug)]
 pub enum TypeErrorKind {
@@ -211,6 +211,8 @@ pub enum DeclKind {
         variants: Vec<EnumVariant>,
     },
     ForeignDeclarations(Vec<FunctionSignature>),
+    // We implement procedures on a type
+    Procedures(Type, Vec<TypedDecl>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -228,6 +230,9 @@ impl TypedDecl {
             DeclKind::Record { name, .. } => Some(name),
             DeclKind::Enum { name, .. } => Some(name),
             DeclKind::ForeignDeclarations(..) => None,
+            // todo: evaluate if we want to define procedures with the name idea in
+            // `register_types`
+            DeclKind::Procedures(..) => None,
         }
     }
 }
@@ -367,6 +372,7 @@ fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>, inferred_ty: Type) -> TypeRe
 
 fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpression> {
     let expr = match expr.0 {
+        Expression::MethodCall(_, _, _) => todo!(),
         Expression::Idx(arr, idx) => {
             let arr = type_expr(ctx, *arr)?;
             println!("arr ctx {ctx:?}");
@@ -819,36 +825,51 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
     Ok(stmt)
 }
 
+pub fn type_fn(ctx: &mut ScopedCtx, fn_def: Function, span: Span) -> TypeResult<TypedDecl> {
+    let Function {
+        name,
+        arguments,
+        body,
+        ret_type,
+    } = fn_def;
+    let mut body_ctx = ctx.child();
+    let mut args = vec![];
+    for var in arguments {
+        let ity = var.0.ty.clone().unwrap();
+        args.push(type_var(&mut body_ctx, var, ity)?);
+    }
+
+    Ok(TypedDecl {
+        ty: match ctx.get_user_def_type(&name) {
+            Some(ty) => ty,
+            None => return Err(TypeError::new(TypeErrorKind::IdentUsedAsFn(name), span)),
+        },
+        kind: DeclKind::Function {
+            name,
+            arguments: args,
+            body: type_stmt(&mut body_ctx, body)?,
+            ret_type,
+        },
+        span,
+        visible: false,
+    })
+}
+
 pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<TypedDecl> {
     let decl = match decl.0 {
-        Declaration::Function {
-            name,
-            arguments,
-            body,
-            ret_type,
-        } => {
-            let mut body_ctx = ctx.child();
-            let mut args = vec![];
-            for var in arguments {
-                let ity = var.0.ty.clone().unwrap();
-                args.push(type_var(&mut body_ctx, var, ity)?);
+        Declaration::Procedures(ty, procs) => {
+            let mut ty_procs = vec![];
+            for proc in procs {
+                ty_procs.push(type_fn(ctx, proc.0, proc.1)?);
             }
-
             TypedDecl {
-                ty: match ctx.get_user_def_type(&name) {
-                    Some(ty) => ty,
-                    None => return Err(TypeError::new(TypeErrorKind::IdentUsedAsFn(name), decl.1)),
-                },
-                kind: DeclKind::Function {
-                    name,
-                    arguments: args,
-                    body: type_stmt(&mut body_ctx, body)?,
-                    ret_type,
-                },
+                ty: ty.clone(),
+                kind: DeclKind::Procedures(ty, ty_procs),
                 span: decl.1,
                 visible: false,
             }
         }
+        Declaration::Function(fn_def) => type_fn(ctx, fn_def, decl.1)?,
         Declaration::Enum { name, variants } => TypedDecl {
             ty: Type::Unit,
             kind: DeclKind::Enum {
@@ -939,19 +960,19 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
 
     for decl in decls {
         let (name, arguments, _body, ret_type) = match &decl.0 {
-            Declaration::Function {
+            Declaration::Function(Function {
                 name,
                 arguments,
                 body,
                 ret_type,
-            } => (name, arguments, body, ret_type),
+            }) => (name, arguments, body, ret_type),
             Declaration::Public(decl) => match &decl.0 {
-                Declaration::Function {
+                Declaration::Function(Function {
                     name,
                     arguments,
                     body,
                     ret_type,
-                } => (name, arguments, body, ret_type),
+                }) => (name, arguments, body, ret_type),
                 _ => continue,
             },
             _ => continue,

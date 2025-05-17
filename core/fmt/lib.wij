@@ -12,10 +12,10 @@ pub fn int_to_string(x: int) -> str {
 }
 
 pub fn println(msg: str) {
-    write(1, strbytes(msg), strlen(msg));
-    write(1, strbytes("\n"), 1);
+    write(1, msg.bytes(), msg.len());
+    write(1, "\n".bytes(), 1);
 }
 
 pub fn print(msg: str) {
-    write(1, strbytes(msg), strlen(msg));
+    write(1, msg.bytes(), msg.len());
 }

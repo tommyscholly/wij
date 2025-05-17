@@ -418,6 +418,7 @@ pub enum Expression {
     Array(Vec<Spanned<Expression>>),
     Ident(String),
     FieldAccess(Box<Spanned<Expression>>, String),
+    MethodCall(Box<Spanned<Expression>>, String, Vec<Spanned<Expression>>),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     FnCall(String, Vec<Spanned<Expression>>),
     RecordInit(String, Vec<(String, Spanned<Expression>)>),
@@ -457,6 +458,38 @@ fn parse_array_elems(parser: &mut Parser) -> ParseResult<Vec<Spanned<Expression>
     Ok(elems)
 }
 
+fn parse_fn_call_args(parser: &mut Parser) -> ParseResult<Vec<Spanned<Expression>>> {
+    let mut args = vec![];
+    // todo: clean this up a bit
+    if let Some((Token::RParen, _)) = parser.peek_next() {
+        return Ok(args);
+    }
+
+    loop {
+        let arg = Expression::parse(parser)?;
+        let arg_span = arg.1.clone();
+        args.push(arg);
+
+        match parser.peek_next() {
+            Some((Token::Comma, _)) => {
+                parser.pop_next();
+            }
+            Some((Token::RParen, _)) => {
+                break;
+            }
+            _ => {
+                return Err(ParseError::with_reason(
+                    ParseErrorKind::MalformedExpression,
+                    arg_span,
+                    "Expected ',' or ')' in function arguments",
+                ));
+            }
+        }
+    }
+
+    Ok(args)
+}
+
 impl Expression {
     fn is_fn_call(&self) -> bool {
         matches!(self, Expression::FnCall(_, _))
@@ -480,35 +513,13 @@ impl Expression {
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
-                    let mut args = Vec::new();
 
                     if let Some((Token::RParen, end_span)) = parser.peek_next() {
                         parser.pop_next();
                         let full_span = span.start..end_span.end;
-                        (Expression::FnCall(ident, args), full_span)
+                        (Expression::FnCall(ident, vec![]), full_span)
                     } else {
-                        loop {
-                            let arg = Expression::parse(parser)?;
-                            let arg_span = arg.1.clone();
-                            args.push(arg);
-
-                            match parser.peek_next() {
-                                Some((Token::Comma, _)) => {
-                                    parser.pop_next();
-                                }
-                                Some((Token::RParen, _)) => {
-                                    break;
-                                }
-                                _ => {
-                                    return Err(ParseError::with_reason(
-                                        ParseErrorKind::MalformedExpression,
-                                        arg_span,
-                                        "Expected ',' or ')' in function arguments",
-                                    ));
-                                }
-                            }
-                        }
-
+                        let args = parse_fn_call_args(parser)?;
                         let (_, rparen_span) = parser.expect_next(Token::RParen)?;
                         let full_span = span.start..rparen_span.end;
                         (Expression::FnCall(ident, args), full_span)
@@ -567,6 +578,18 @@ impl Expression {
             parser.pop_next();
 
             if let Some((Token::Identifier(field_name), field_span)) = parser.pop_next() {
+                if let Some((Token::LParen, _)) = parser.peek_next() {
+                    parser.pop_next();
+                    let args = parse_fn_call_args(parser)?;
+                    let (_, rparen) = parser.expect_next(Token::RParen)?;
+                    let span = expr.1.start..rparen.end;
+                    expr = (
+                        Expression::MethodCall(Box::new(expr), field_name, args),
+                        span,
+                    );
+                    break;
+                }
+
                 let start = expr.1.start;
                 let end = field_span.end;
                 expr = (
@@ -699,13 +722,42 @@ pub struct EnumVariant {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Function {
+    name: String,
+    arguments: Vec<Spanned<Var>>,
+    body: Spanned<Statement>,
+    ret_type: Option<Type>,
+}
+
+impl Parseable for Function {
+    fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
+        let start_span = parser.expect_kw_kind(Keyword::Fn)?;
+        let (name, _) = parser.expect_ident()?;
+        let _lparen = parser.expect_next(Token::LParen)?;
+        let arguments = parse_args(parser, Token::RParen)?;
+        let ret_type = if let Some((Token::Arrow, _)) = parser.peek_next() {
+            parser.pop_next();
+            Some(Type::parse(parser)?.0)
+        } else {
+            None
+        };
+        let (body, body_span) = Statement::parse(parser)?;
+        let span = start_span.start..body_span.end;
+        Ok((
+            Function {
+                name,
+                arguments,
+                body: (body, body_span),
+                ret_type,
+            },
+            span,
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Declaration {
-    Function {
-        name: String,
-        arguments: Vec<Spanned<Var>>,
-        body: Spanned<Statement>,
-        ret_type: Option<Type>,
-    },
+    Function(Function),
     Record {
         name: String,
         fields: Vec<Spanned<Var>>,
@@ -718,6 +770,7 @@ pub enum Declaration {
     ForeignDeclarations(Vec<Spanned<ForeignDeclaration>>),
     Use(Path),
     Public(Box<Spanned<Declaration>>),
+    Procedures(Type, Vec<Spanned<Function>>),
 }
 
 fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned<Var>>> {
@@ -790,28 +843,30 @@ impl Parseable for Declaration {
                 let span = use_span.start..semi_span.end;
                 Ok((Declaration::Use(path), span))
             }
+            Some((Token::Keyword(Keyword::Procs), _)) => {
+                let _start_span = parser.expect_kw_kind(Keyword::Procs)?;
+                let (ty, ty_span) = Type::parse(parser)?;
+                let _lbrace = parser.expect_next(Token::LBrace)?;
+                let mut procs = vec![];
+                while parser.peek_next().is_some() {
+                    match parser.peek_next() {
+                        Some((Token::RBrace, _)) => break,
+                        Some((Token::Keyword(Keyword::Pub), _)) => {
+                            // todo: fix this, we are currently not handling access mods on procs
+                            let _ = parser.pop_next();
+                        }
+                        _ => {}
+                    }
+                    let fn_parse = Function::parse(parser)?;
+                    procs.push(fn_parse);
+                }
+                let _rbrace = parser.expect_next(Token::RBrace)?;
+                let span = ty_span.start.._rbrace.1.end;
+                Ok((Declaration::Procedures(ty, procs), span))
+            }
             Some((Token::Keyword(Keyword::Fn), _)) => {
-                let start_span = parser.expect_kw_kind(Keyword::Fn)?;
-                let (name, _) = parser.expect_ident()?;
-                let _lparen = parser.expect_next(Token::LParen)?;
-                let arguments = parse_args(parser, Token::RParen)?;
-                let ret_type = if let Some((Token::Arrow, _)) = parser.peek_next() {
-                    parser.pop_next();
-                    Some(Type::parse(parser)?.0)
-                } else {
-                    None
-                };
-                let (body, body_span) = Statement::parse(parser)?;
-                let span = start_span.start..body_span.end;
-                Ok((
-                    Declaration::Function {
-                        name,
-                        arguments,
-                        body: (body, body_span),
-                        ret_type,
-                    },
-                    span,
-                ))
+                let (func, func_span) = Function::parse(parser)?;
+                Ok((Declaration::Function(func), func_span))
             }
             Some((Token::Keyword(Keyword::Pub), _)) => {
                 let pub_span = parser.expect_kw_kind(Keyword::Pub)?;

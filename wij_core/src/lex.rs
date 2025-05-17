@@ -75,6 +75,10 @@ pub enum Keyword {
     Str,
     Bool,
     Byte,
+
+    Procs,
+    // Self is a kw
+    SelfThis,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -103,6 +107,8 @@ impl TryFrom<&str> for Keyword {
             "return" => Ok(Keyword::Return),
             "break" => Ok(Keyword::Break),
             "continue" => Ok(Keyword::Continue),
+            "procs" => Ok(Keyword::Procs),
+            "self" => Ok(Keyword::SelfThis),
             _ => Err(()),
         }
     }
