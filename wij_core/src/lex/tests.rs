@@ -1,4 +1,4 @@
-use super::lex::*;
+use super::*;
 use crate::ast::{BinOp, Spanned};
 
 #[test]

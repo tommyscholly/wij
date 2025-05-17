@@ -1,0 +1,13 @@
+module main;
+
+use core:fmt;
+
+fn main() {
+    let x = [1, 2, 3];
+
+    let idx = 0;
+    for i in x {
+        x[idx] = i + 1;
+        idx = idx + 1;
+    }
+}

@@ -1,4 +1,3 @@
-#![allow(unused)]
 use std::{collections::HashMap, fmt::Display};
 
 use crate::{
@@ -6,7 +5,7 @@ use crate::{
     ast::{self, Type},
 };
 
-use super::{BinOp, Declaration, Expression, Literal, Path, Span, Spanned, Statement, Var};
+use super::{BinOp, Declaration, Expression, Literal, Span, Spanned, Statement, Var};
 
 #[derive(Debug)]
 pub enum TypeErrorKind {
@@ -101,8 +100,6 @@ impl AstError for TypeError {
 
 pub type TypeResult<T> = Result<T, TypeError>;
 
-pub type VarId = u32;
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct FunctionSignature {
     pub param_types: Vec<Type>,
@@ -126,7 +123,7 @@ impl Display for FunctionSignature {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TypedVar {
-    pub id: VarId,
+    pub id: String,
     pub ty: Type,
     pub span: Span,
 }
@@ -138,6 +135,8 @@ pub enum StatementKind {
         value: Option<TypedExpression>,
     },
     Return(Option<TypedExpression>),
+    Break,
+    Continue,
     Block(Vec<TypedStatement>),
     If {
         condition: TypedExpression,
@@ -145,6 +144,15 @@ pub enum StatementKind {
         else_block: Option<Box<TypedStatement>>,
     },
     Assignment(Box<TypedExpression>, Box<TypedExpression>),
+    For {
+        var: TypedVar,
+        in_expr: TypedExpression,
+        body: Box<TypedStatement>,
+    },
+    While {
+        condition: TypedExpression,
+        body: Box<TypedStatement>,
+    },
     // Match {
     //     value: TypedExpression,
     //     cases: Vec<MatchCase>,
@@ -163,11 +171,13 @@ pub struct TypedStatement {
 pub enum ExpressionKind {
     Literal(Literal),
     Ident(String),
+    Array(Vec<TypedExpression>),
     FieldAccess(Box<TypedExpression>, String),
     BinOp(BinOp, Box<TypedExpression>, Box<TypedExpression>),
     FnCall(String, Vec<TypedExpression>),
     RecordInit(String, Vec<(String, TypedExpression)>),
     DataConstructor(String, Option<Box<TypedExpression>>),
+    Idx(Box<TypedExpression>, Box<TypedExpression>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -247,25 +257,13 @@ impl Module {
 
 #[derive(Default, Clone, Debug)]
 pub struct TyCtx {
-    var_id_map: HashMap<String, VarId>,
-    var_id_type: HashMap<VarId, Type>,
+    var_id_type: HashMap<String, Type>,
     user_def_types: HashMap<String, Type>,
-    data_constructors: HashMap<String, Option<Type>>,
-    decls: Vec<TypedDecl>,
 }
 
 impl TyCtx {
     pub fn new() -> TyCtx {
         TyCtx::default()
-    }
-
-    fn var_id(&self, name: &str) -> Option<&VarId> {
-        self.var_id_map.get(name)
-    }
-
-    fn var_ty(&self, id: VarId) -> &Type {
-        assert!(self.var_id_type.contains_key(&id));
-        self.var_id_type.get(&id).unwrap()
     }
 
     fn insert_user_def_type(&mut self, name: String, ty: Type) {
@@ -274,10 +272,6 @@ impl TyCtx {
 
     fn get_user_def_type(&self, name: &str) -> Option<Type> {
         self.user_def_types.get(name).cloned()
-    }
-
-    fn insert_data_constructor(&mut self, name: String, ty: Option<Type>) {
-        self.data_constructors.insert(name, ty);
     }
 }
 
@@ -288,13 +282,6 @@ pub struct ScopedCtx<'a> {
 }
 
 impl<'a> ScopedCtx<'a> {
-    fn new() -> ScopedCtx<'a> {
-        ScopedCtx {
-            ctx: TyCtx::new(),
-            parent: None,
-        }
-    }
-
     fn from_tyctx(ctx: TyCtx) -> ScopedCtx<'a> {
         ScopedCtx { ctx, parent: None }
     }
@@ -306,32 +293,18 @@ impl<'a> ScopedCtx<'a> {
         }
     }
 
-    fn var_id(&self, name: &str) -> Option<&VarId> {
-        match self.ctx.var_id_map.get(name) {
-            Some(id) => Some(id),
+    fn var_ty(&self, id: &str) -> Option<&Type> {
+        match self.ctx.var_id_type.get(id) {
+            Some(ty) => Some(ty),
             None => match self.parent {
-                Some(parent) => parent.var_id(name),
+                Some(parent) => parent.var_ty(id),
                 None => None,
             },
         }
     }
 
-    fn var_ty(&self, id: VarId) -> &Type {
-        match self.ctx.var_id_type.get(&id) {
-            Some(ty) => ty,
-            None => match self.parent {
-                Some(parent) => parent.var_ty(id),
-                None => panic!("var not found: {}", id),
-            },
-        }
-    }
-
-    fn insert_var(&mut self, name: String, ty: Type) -> VarId {
-        let id = self.ctx.var_id_map.len() as VarId;
-        self.ctx.var_id_map.insert(name, id);
-        self.ctx.var_id_type.insert(id, ty);
-
-        id
+    fn insert_var(&mut self, name: String, ty: Type) {
+        self.ctx.var_id_type.insert(name, ty);
     }
 
     fn get_user_def_type(&self, name: &str) -> Option<Type> {
@@ -384,9 +357,9 @@ fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>, inferred_ty: Type) -> TypeRe
         }
     };
 
-    let id = ctx.insert_var(var.name.clone(), var.ty.clone().unwrap());
+    ctx.insert_var(var.name.clone(), var.ty.clone().unwrap());
     Ok(TypedVar {
-        id,
+        id: var.name,
         ty: var.ty.unwrap(),
         span,
     })
@@ -394,6 +367,60 @@ fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>, inferred_ty: Type) -> TypeRe
 
 fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpression> {
     let expr = match expr.0 {
+        Expression::Idx(arr, idx) => {
+            let arr = type_expr(ctx, *arr)?;
+            println!("arr ctx {ctx:?}");
+            println!("arr {arr:?}");
+            let expression_ty = match &arr.ty {
+                Type::Array(ty) => *ty.clone(),
+                _ => {
+                    let err = TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: Type::Array(Box::new(Type::Generic('a'))),
+                            found: arr.ty.clone(),
+                        },
+                        expr.1,
+                    )
+                    .add_note(format!("This has type {}", arr.ty), arr.span);
+                    return Err(err);
+                }
+            };
+            let idx = type_expr(ctx, *idx)?;
+            TypedExpression {
+                ty: expression_ty,
+                kind: ExpressionKind::Idx(Box::new(arr), Box::new(idx)),
+                span: expr.1,
+            }
+        }
+        Expression::Array(elems) => {
+            let mut ty_elems = vec![];
+            let mut detected_type = Type::Any;
+            let mut detected_span = expr.1.clone();
+            for elem in elems {
+                let ty_expr = type_expr(ctx, elem)?;
+                if detected_type == Type::Any {
+                    detected_type = ty_expr.ty.clone();
+                    detected_span = ty_expr.span.clone();
+                } else if ty_expr.ty != detected_type {
+                    let err = TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: detected_type.clone(),
+                            found: ty_expr.ty.clone(),
+                        },
+                        expr.1.clone(),
+                    )
+                    .add_note(format!("This has type {}", detected_type), detected_span)
+                    .add_note(format!("This has type {}", ty_expr.ty), ty_expr.span);
+                    return Err(err);
+                }
+                ty_elems.push(ty_expr);
+            }
+            TypedExpression {
+                ty: Type::Array(Box::new(ty_elems[0].ty.clone())),
+                kind: ExpressionKind::Array(ty_elems),
+                span: expr.1,
+            }
+        }
         Expression::RecordInit(record_name, assignments) => {
             let mut ty_assignments = vec![];
             for assignment in assignments {
@@ -427,8 +454,8 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
             span: expr.1,
         },
         Expression::Ident(ident) => TypedExpression {
-            ty: match ctx.var_id(&ident) {
-                Some(id) => ctx.var_ty(*id).clone(),
+            ty: match ctx.var_ty(&ident) {
+                Some(ty) => ty.clone(),
                 None => {
                     return Err(TypeError::new(
                         TypeErrorKind::UndefinedVariable(ident),
@@ -558,7 +585,7 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
                 None
             };
             if field_ty.is_none() {
-                let mut err = TypeError::new(
+                let err = TypeError::new(
                     TypeErrorKind::InvalidType(ty_expr.ty.clone()),
                     expr_span.clone(),
                 )
@@ -575,7 +602,7 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
             }
         }
         Expression::DataConstruction(construct_name, data) => {
-            let (dacon_ty, enum_ty) = match ctx.get_user_def_type(&construct_name) {
+            let (_dacon_ty, enum_ty) = match ctx.get_user_def_type(&construct_name) {
                 Some(Type::DataConstructor(dacon, data, ty_name)) => (
                     Type::DataConstructor(dacon, data, ty_name.clone()),
                     Type::UserDef(ty_name),
@@ -607,12 +634,59 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
 
 fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedStatement> {
     let stmt = match stmt.0 {
+        Statement::Break => TypedStatement {
+            kind: StatementKind::Break,
+            ty: Type::Unit,
+            span: stmt.1,
+        },
+        Statement::Continue => TypedStatement {
+            kind: StatementKind::Continue,
+            ty: Type::Unit,
+            span: stmt.1,
+        },
+        Statement::For { var, in_expr, body } => {
+            let ty_in_expr = type_expr(ctx, in_expr)?;
+            let var_ty = if let Type::Array(inner_ty) = &ty_in_expr.ty {
+                *inner_ty.clone()
+            } else {
+                ty_in_expr.ty.clone()
+            };
+
+            let mut child_ctx = ctx.child();
+            let ty_var = type_var(&mut child_ctx, var, var_ty)?;
+            let ty_body = type_stmt(&mut child_ctx, *body)?;
+
+            TypedStatement {
+                kind: StatementKind::For {
+                    var: ty_var,
+                    in_expr: ty_in_expr,
+                    body: Box::new(ty_body),
+                },
+                ty: Type::Unit,
+                span: stmt.1,
+            }
+        }
+        Statement::While { condition, body } => {
+            let ty_condition = type_expr(ctx, condition)?;
+
+            let mut child_ctx = ctx.child();
+            let ty_body = type_stmt(&mut child_ctx, *body)?;
+
+            TypedStatement {
+                kind: StatementKind::While {
+                    condition: ty_condition,
+                    body: Box::new(ty_body),
+                },
+                ty: Type::Unit,
+                span: stmt.1,
+            }
+        }
         Statement::Assignment(lhs, rhs) => {
             let ty_lhs = type_expr(ctx, *lhs)?;
             let ty_rhs = type_expr(ctx, *rhs)?;
 
             if ty_lhs.ty != ty_rhs.ty {
-                let mut err = TypeError::new(
+                let err = TypeError::new(
                     TypeErrorKind::TypeMismatch {
                         expected: ty_lhs.ty.clone(),
                         found: ty_rhs.ty.clone(),
@@ -626,7 +700,9 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
 
             if !matches!(
                 ty_lhs.kind,
-                ExpressionKind::Ident(_) | ExpressionKind::FieldAccess(_, _)
+                ExpressionKind::Ident(_)
+                    | ExpressionKind::FieldAccess(_, _)
+                    | ExpressionKind::Idx(_, _)
             ) {
                 return Err(TypeError::new(TypeErrorKind::Unassignable, stmt.1));
             }
@@ -647,6 +723,7 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
                 (None, Type::Any)
             };
 
+            print!("var name {}: ", var.0.name);
             let var_ty = var.0.ty.clone();
             let ty_var = match type_var(ctx, var, inferred_ty) {
                 Ok(ty_var) => ty_var,
@@ -666,6 +743,7 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
                 },
             };
 
+            println!("ty var: {ty_var:?}");
             TypedStatement {
                 kind: StatementKind::Let {
                     var: ty_var,
@@ -734,6 +812,7 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
             }
         }
 
+        #[allow(unused)]
         Statement::Match { value, cases } => todo!(),
     };
 
@@ -859,7 +938,7 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
     }
 
     for decl in decls {
-        let (name, arguments, body, ret_type) = match &decl.0 {
+        let (name, arguments, _body, ret_type) = match &decl.0 {
             Declaration::Function {
                 name,
                 arguments,
@@ -899,22 +978,19 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
     }
 }
 
-type ModuleUseDecls = (Module, Vec<Spanned<Path>>, Vec<Spanned<Declaration>>);
-
-// Filters decls into decls, modules and uses
+// Filters decls into decls, and modules
 // Should only ever be one module
-fn extract_module_uses(decls: Vec<Spanned<Declaration>>) -> TypeResult<ModuleUseDecls> {
+fn extract_module(
+    decls: Vec<Spanned<Declaration>>,
+) -> TypeResult<(Module, Vec<Spanned<Declaration>>)> {
     let mut filt_decls: Vec<Spanned<Declaration>> = vec![];
     let mut modules = vec![];
-    let mut uses = vec![];
     for decl in decls {
         match decl.0 {
             Declaration::Module(name) => {
                 modules.push((name, decl.1));
             }
-            Declaration::Use(name) => {
-                uses.push((name, decl.1));
-            }
+            Declaration::Use(_) => {}
             _ => {
                 filt_decls.push(decl);
             }
@@ -939,20 +1015,20 @@ fn extract_module_uses(decls: Vec<Spanned<Declaration>>) -> TypeResult<ModuleUse
         exports: vec![],
     };
 
-    Ok((module, uses, filt_decls))
+    Ok((module, filt_decls))
 }
 
 pub fn type_check(decls: Vec<Spanned<Declaration>>, imports: Vec<TypedDecl>) -> TypeResult<Module> {
     let mut ctx = TyCtx::new();
 
-    let (mut module, uses, decls) = extract_module_uses(decls)?;
+    let (mut module, decls) = extract_module(decls)?;
 
     register_types(&mut ctx, &decls, imports);
 
     let mut ctx = ScopedCtx::from_tyctx(ctx);
     let mut ty_decls = vec![];
     let mut exports = vec![];
-    for (i, decl) in decls.into_iter().enumerate() {
+    for decl in decls.into_iter() {
         let ty_decl = type_decl(&mut ctx, decl)?;
         if ty_decl.visible {
             exports.push(ty_decl.clone());

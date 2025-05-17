@@ -164,6 +164,17 @@ pub enum Statement {
         value: Spanned<Expression>,
         cases: Vec<Spanned<MatchCase>>,
     },
+    For {
+        var: Spanned<Var>,
+        in_expr: Spanned<Expression>,
+        body: Box<Spanned<Statement>>,
+    },
+    While {
+        condition: Spanned<Expression>,
+        body: Box<Spanned<Statement>>,
+    },
+    Break,
+    Continue,
     Assignment(Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     Expression(Box<Spanned<Expression>>), // a subclass of expressions being executed for side effects
 }
@@ -193,6 +204,16 @@ impl Parseable for Statement {
                     span,
                 ))
             }
+            Some((Token::Keyword(Keyword::Break), span)) => {
+                parser.pop_next();
+                let _ = parser.expect_next(Token::SemiColon)?;
+                Ok((Statement::Break, span))
+            }
+            Some((Token::Keyword(Keyword::Continue), span)) => {
+                parser.pop_next();
+                let _ = parser.expect_next(Token::SemiColon)?;
+                Ok((Statement::Continue, span))
+            }
             Some((Token::Keyword(Keyword::Return), span_start)) => {
                 parser.pop_next();
                 if let Some((Token::SemiColon, _)) = parser.peek_next() {
@@ -209,6 +230,38 @@ impl Parseable for Statement {
                         span_start.start..expr_end,
                     ))
                 }
+            }
+            Some((Token::Keyword(Keyword::For), for_start)) => {
+                parser.pop_next();
+                let var = Var::parse(parser)?;
+                let _in = parser.expect_kw_kind(Keyword::In)?;
+                let in_expr = Expression::parse(parser)?;
+                let body = if let Some((Token::LBrace, _)) = parser.peek_next() {
+                    Box::new(Statement::parse(parser)?)
+                } else {
+                    return Err(ParseError::with_reason(
+                        ParseErrorKind::MalformedExpression,
+                        for_start,
+                        "Expected for block",
+                    ));
+                };
+                let span = for_start.start..body.1.end;
+                Ok((Statement::For { var, in_expr, body }, span))
+            }
+            Some((Token::Keyword(Keyword::While), while_start)) => {
+                parser.pop_next();
+                let condition = Expression::parse(parser)?;
+                let body = if let Some((Token::LBrace, _)) = parser.peek_next() {
+                    Box::new(Statement::parse(parser)?)
+                } else {
+                    return Err(ParseError::with_reason(
+                        ParseErrorKind::MalformedExpression,
+                        while_start,
+                        "Expected while block",
+                    ));
+                };
+                let span = while_start.start..body.1.end;
+                Ok((Statement::While { condition, body }, span))
             }
             Some((Token::Keyword(Keyword::If), if_start)) => {
                 parser.pop_next();
@@ -362,12 +415,14 @@ pub enum Expression {
     // Bool(bool),
     // String(String),
     Literal(Literal),
+    Array(Vec<Spanned<Expression>>),
     Ident(String),
     FieldAccess(Box<Spanned<Expression>>, String),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     FnCall(String, Vec<Spanned<Expression>>),
     RecordInit(String, Vec<(String, Spanned<Expression>)>),
     DataConstruction(String, Option<Box<Spanned<Expression>>>),
+    Idx(Box<Spanned<Expression>>, Box<Spanned<Expression>>),
 }
 
 fn parse_record_assignments(
@@ -388,6 +443,20 @@ fn parse_record_assignments(
     Ok(assignments)
 }
 
+fn parse_array_elems(parser: &mut Parser) -> ParseResult<Vec<Spanned<Expression>>> {
+    let mut elems = Vec::new();
+    loop {
+        let expr = Expression::parse(parser)?;
+        elems.push(expr);
+        if let Some((Token::Comma, _)) = parser.peek_next() {
+            parser.pop_next();
+        } else {
+            break;
+        }
+    }
+    Ok(elems)
+}
+
 impl Expression {
     fn is_fn_call(&self) -> bool {
         matches!(self, Expression::FnCall(_, _))
@@ -403,6 +472,11 @@ impl Expression {
                 (Expression::Literal(Bool(false)), span)
             }
             Some((Token::String(s), span)) => (Expression::Literal(Str(s)), span),
+            Some((Token::LBracket, start_span)) => {
+                let elems = parse_array_elems(parser)?;
+                let end_span = parser.expect_next(Token::RBracket)?;
+                (Expression::Array(elems), start_span.start..end_span.1.end)
+            }
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
@@ -441,26 +515,34 @@ impl Expression {
                     }
                 }
                 Some((Token::LBrace, _)) => {
-                    parser.pop_next();
-                    let assignments = parse_record_assignments(parser)?;
-                    let (_, rbrace_span) = parser.expect_next(Token::RBrace)?;
-                    let full_span = span.start..rbrace_span.end;
-                    (Expression::RecordInit(ident, assignments), full_span)
+                    if ident.chars().next().unwrap().is_uppercase() {
+                        parser.pop_next();
+                        let assignments = parse_record_assignments(parser)?;
+                        let (_, rbrace_span) = parser.expect_next(Token::RBrace)?;
+                        let full_span = span.start..rbrace_span.end;
+                        (Expression::RecordInit(ident, assignments), full_span)
+                    } else {
+                        (Expression::Ident(ident), span)
+                    }
                 }
                 _ => {
-                    let mut try_parser = parser.clone();
-                    match Expression::parse(&mut try_parser) {
-                        Ok((e, e_span)) => {
-                            parser.replace(try_parser);
-                            (
-                                Expression::DataConstruction(
-                                    ident,
-                                    Some(Box::new((e, e_span.clone()))),
-                                ),
-                                span.start..e_span.end,
-                            )
+                    if ident.chars().next().unwrap().is_uppercase() {
+                        let mut try_parser = parser.clone();
+                        match Expression::parse(&mut try_parser) {
+                            Ok((e, e_span)) => {
+                                parser.replace(try_parser);
+                                (
+                                    Expression::DataConstruction(
+                                        ident,
+                                        Some(Box::new((e, e_span.clone()))),
+                                    ),
+                                    span.start..e_span.end,
+                                )
+                            }
+                            Err(_) => (Expression::Ident(ident), span),
                         }
-                        Err(_) => (Expression::Ident(ident), span),
+                    } else {
+                        (Expression::Ident(ident), span)
                     }
                 }
             },
@@ -498,6 +580,14 @@ impl Expression {
                     "Expected field name after '.'",
                 ));
             }
+        }
+
+        if let Some((Token::LBracket, lbracket_span)) = parser.peek_next() {
+            parser.pop_next();
+            let index = Expression::parse(parser)?;
+            let (_, rbracket_span) = parser.expect_next(Token::RBracket)?;
+            let full_span = lbracket_span.start..rbracket_span.end;
+            expr = (Expression::Idx(Box::new(expr), Box::new(index)), full_span);
         }
 
         Ok(expr)

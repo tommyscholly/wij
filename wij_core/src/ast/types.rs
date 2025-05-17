@@ -13,11 +13,12 @@ pub enum Type {
     Str,
     Byte,
     Ptr(Box<Type>),
-    Array(Box<Type>, usize),
+    Array(Box<Type>),
     Tuple(Vec<Type>),
     Fn(Box<FunctionSignature>),
     UserDef(String),
     Record(Vec<(String, Type)>),
+    Generic(char),
     DataConstructor(String, Option<Box<Type>>, String),
     // compiler generated
     Any,
@@ -31,7 +32,8 @@ impl Display for Type {
             Int => write!(f, "int"),
             Bool => write!(f, "bool"),
             Str => write!(f, "str"),
-            Array(t, len) => write!(f, "[{}; {}]", t, len),
+            Generic(c) => write!(f, "'{}", c),
+            Array(t) => write!(f, "[{}]", t),
             Tuple(types) => write!(
                 f,
                 "({})",
@@ -85,7 +87,7 @@ impl Parseable for Type {
                 let (ty, span_end) = Type::parse(parser)?;
                 let _ = parser.expect_next(Token::RBracket)?;
                 let span = span.start..span_end.end;
-                Ok((Type::Array(Box::new(ty), 0), span))
+                Ok((Type::Array(Box::new(ty)), span))
             }
             _ => {
                 let (kw, span) = parser.expect_kw()?;

@@ -2,6 +2,7 @@ use std::{path::PathBuf, process::exit};
 
 use ariadne::{ColorGenerator, Label, Report, ReportKind, Source};
 use clap::Parser as Clap;
+use rand::{Rng, rng};
 
 use wij_core::{AstError, Module, Parser, tokenize, type_check, use_analysis};
 
@@ -19,7 +20,9 @@ struct Options {
 }
 
 fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl AstError) {
-    let mut colors = ColorGenerator::new();
+    let mut rand_state = [0u16; 3];
+    rng().fill(&mut rand_state);
+    let mut colors = ColorGenerator::from_state(rand_state, 0.5);
 
     let span = match e.span() {
         Some(span) => span,

@@ -60,13 +60,16 @@ pub enum Keyword {
     For,
     While,
     In,
-    Return,
     True,
     False,
     Foreign,
     Use,
     Pub,
     Module,
+
+    Return,
+    Break,
+    Continue,
 
     Int,
     Str,
@@ -88,7 +91,6 @@ impl TryFrom<&str> for Keyword {
             "match" => Ok(Keyword::Match),
             "for" => Ok(Keyword::For),
             "in" => Ok(Keyword::In),
-            "return" => Ok(Keyword::Return),
             "true" => Ok(Keyword::True),
             "false" => Ok(Keyword::False),
             "bool" => Ok(Keyword::Bool),
@@ -98,6 +100,9 @@ impl TryFrom<&str> for Keyword {
             "module" => Ok(Keyword::Module),
             "str" => Ok(Keyword::Str),
             "byte" => Ok(Keyword::Byte),
+            "return" => Ok(Keyword::Return),
+            "break" => Ok(Keyword::Break),
+            "continue" => Ok(Keyword::Continue),
             _ => Err(()),
         }
     }

@@ -44,14 +44,14 @@ fn test_parse_fn_with_params_and_body() {
                 (
                     Var {
                         name: "a".to_string(),
-                        ty: Type::Int,
+                        ty: Some(Type::Int),
                     },
                     8..14,
                 ),
                 (
                     Var {
                         name: "b".to_string(),
-                        ty: Type::Int,
+                        ty: Some(Type::Int),
                     },
                     16..22,
                 ),
@@ -62,7 +62,7 @@ fn test_parse_fn_with_params_and_body() {
                         var: (
                             Var {
                                 name: "c".to_string(),
-                                ty: Type::Int,
+                                ty: Some(Type::Int),
                             },
                             42..48,
                         ),
@@ -201,14 +201,14 @@ fn test_type_record() {
                 (
                     Var {
                         name: "a".to_string(),
-                        ty: Type::Int,
+                        ty: Some(Type::Int),
                     },
                     14..20,
                 ),
                 (
                     Var {
                         name: "b".to_string(),
-                        ty: Type::Int,
+                        ty: Some(Type::Int),
                     },
                     22..28,
                 ),
@@ -240,7 +240,7 @@ fn test_fn_call() {
                         var: (
                             Var {
                                 name: "a".to_string(),
-                                ty: Type::Int,
+                                ty: Some(Type::Int),
                             },
                             16..22,
                         ),
