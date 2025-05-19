@@ -1,4 +1,4 @@
 [workspace]
 resolver = "2"
-members = [ "wij_core", "wijc"]
+members = [ "wij_codegen", "wij_core", "wijc"]
 

@@ -10,7 +10,7 @@ use crate::{
 };
 
 use typed::FunctionSignature;
-use types::Type;
+pub use types::Type;
 
 use std::{collections::VecDeque, fmt::Display};
 

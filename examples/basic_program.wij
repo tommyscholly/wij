@@ -24,6 +24,10 @@ fn main() {
 
     let c = Blue 1;
 
+    {
+        print("test");
+    }
+
     x = 1;
     t.x = 2;
     println(int_to_string(y));

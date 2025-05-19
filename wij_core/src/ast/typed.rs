@@ -210,7 +210,7 @@ pub enum DeclKind {
         name: String,
         variants: Vec<EnumVariant>,
     },
-    ForeignDeclarations(Vec<FunctionSignature>),
+    ForeignDeclarations(Vec<(String, FunctionSignature)>),
     // We implement procedures on a type
     Procedures(Type, Vec<TypedDecl>),
 }
@@ -907,8 +907,8 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
             for (fd, _) in fds {
                 let name = fd.name;
                 let sig = fd.sig;
-                ctx.insert_user_def_type(name, Type::Fn(Box::new(sig.clone())));
-                ty_fds.push(sig);
+                ctx.insert_user_def_type(name.clone(), Type::Fn(Box::new(sig.clone())));
+                ty_fds.push((name, sig));
             }
 
             TypedDecl {

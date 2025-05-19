@@ -1,0 +1,9 @@
+[package]
+name = "wij_codegen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cranelift = "0.119.0"
+melior = "0.24.0"
+wij_core = { path = "../wij_core" }
