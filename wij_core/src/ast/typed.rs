@@ -275,7 +275,7 @@ impl TyCtx {
         self.user_def_types.insert(name, ty);
     }
 
-    fn get_user_def_type(&self, name: &str) -> Option<Type> {
+    pub fn get_user_def_type(&self, name: &str) -> Option<Type> {
         self.user_def_types.get(name).cloned()
     }
 }

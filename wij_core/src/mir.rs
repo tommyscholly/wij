@@ -4,20 +4,22 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
+mod ssa;
+
 use std::collections::HashMap;
 
 use crate::{
     Module,
     ast::{
-        Type,
+        Literal, Type,
         typed::{
-            DeclKind, ExpressionKind, FunctionSignature, StatementKind, TypedExpression,
+            DeclKind, ExpressionKind, FunctionSignature, StatementKind, TyCtx, TypedExpression,
             TypedStatement, TypedVar,
         },
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum MIRType {
     Int,
     Bool,
@@ -91,10 +93,12 @@ impl LabelBuilder {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Data {
     Local(LocalID, MIRType),
     Param(ParamID, MIRType),
+    // index into an offset at data 0 by data 1
+    Offset(Box<Data>, Box<Data>),
 }
 
 #[derive(Debug)]
@@ -122,6 +126,7 @@ enum Trans {
 #[derive(Debug)]
 enum Value {
     Immediate(i32),
+    Bool(bool),
     Data(Data),
     // Array loading can also be used for records
     Array(Vec<Value>),
@@ -135,22 +140,114 @@ enum Statement {
     // Heap (3)
     Allocate { local: LocalID, ty: MIRType },
     Store { location: Data, value: Value },
-    Load { src: Data, dst: Data },
+    Move { src: Data, dst: Data },
     // Loops should drop into a block, which will end in a Trans::Goto to the start
     Loop(BlockID),
 }
 
 impl Statement {
-    fn lower(cfg: &mut Cfg, stmt: TypedStatement) -> Self {
-        todo!()
+    fn lower(cfg: &mut Cfg, stmt: TypedStatement) -> Vec<Self> {
+        match stmt.kind {
+            StatementKind::Let { var, value } => {
+                let local_id = cfg.label_builder.local_id();
+                match value {
+                    // None => vec![Statement::Allocate {
+                    //     local: local_id,
+                    //     ty: MIRType::from(var.ty),
+                    // }],
+
+                    // should we emit anything?
+                    None => vec![],
+                    Some(value) => {
+                        let mir_ty = MIRType::from(var.ty);
+                        let mut expr = Statement::lower_expr(cfg, value);
+
+                        let data = Data::Local(local_id, mir_ty);
+                        cfg.var_data_map.insert(var.id, data.clone());
+
+                        let store = Statement::Store {
+                            location: data,
+                            value: Value::Data(expr.last().unwrap().to_data()),
+                        };
+
+                        expr.push(store);
+                        expr
+                    }
+                }
+            }
+            _ => todo!(),
+        }
     }
 
-    fn lower_expr(cfg: &mut Cfg, expr: TypedExpression) -> Self {
-        todo!()
+    fn lower_expr(cfg: &mut Cfg, expr: TypedExpression) -> Vec<Self> {
+        match expr.kind {
+            ExpressionKind::Literal(lit) => vec![match lit {
+                Literal::Int(i) => Statement::Store {
+                    location: Data::Local(cfg.label_builder.local_id(), MIRType::Int),
+                    value: Value::Immediate(i),
+                },
+                Literal::Bool(b) => Statement::Store {
+                    location: Data::Local(cfg.label_builder.local_id(), MIRType::Bool),
+                    value: Value::Bool(b),
+                },
+                _ => todo!(),
+            }],
+            ExpressionKind::Ident(var) => {
+                // todo: avoid this load
+                let data_loc = cfg.var_data_map.get(&var).unwrap().clone();
+                let tmp_local_id = cfg.label_builder.local_id();
+                // safety: all variables should have types by the end of type checking
+                let var_ty = cfg.tyctx.get_user_def_type(&var).unwrap();
+                vec![Statement::Move {
+                    src: data_loc,
+                    dst: Data::Local(tmp_local_id, MIRType::from(var_ty)),
+                }]
+            }
+            ExpressionKind::Array(exprs) => {
+                let mut stmts: Vec<Self> = exprs
+                    .into_iter()
+                    .map(|expr| Statement::lower_expr(cfg, expr))
+                    .flatten()
+                    .collect();
+
+                let values = stmts
+                    .iter()
+                    .map(|stmt| Value::Data(stmt.to_data()))
+                    .collect();
+
+                stmts.push(Statement::Store {
+                    location: Data::Local(cfg.label_builder.local_id(), MIRType::Int),
+                    value: Value::Array(values),
+                });
+
+                stmts
+            }
+            ExpressionKind::Idx(expr, idx_expr) => {
+                let mut to_idx_expr = Statement::lower_expr(cfg, *expr);
+                let to_idx_expr_data_loc = to_idx_expr.last().unwrap().to_data();
+
+                let mut idx_expr = Statement::lower_expr(cfg, *idx_expr);
+                let idx_expr_data_loc = idx_expr.last().unwrap().to_data();
+                let tmp_idx_local_id = cfg.label_builder.local_id();
+                let stmt = Statement::Move {
+                    src: Data::Offset(Box::new(to_idx_expr_data_loc), Box::new(idx_expr_data_loc)),
+                    dst: Data::Local(tmp_idx_local_id, MIRType::Int),
+                };
+
+                to_idx_expr.append(&mut idx_expr);
+                to_idx_expr.push(stmt);
+                to_idx_expr
+            }
+        }
     }
 
     fn to_data(&self) -> Data {
-        todo!()
+        match self {
+            Statement::Store { location, .. } => location.clone(),
+            Statement::Move { dst, .. } => dst.clone(),
+            Statement::Allocate { local, ty } => Data::Local(*local, ty.clone()),
+            Statement::Loop(_) => panic!("cannot convert loop to data"),
+        }
     }
 }
 
@@ -314,7 +411,7 @@ impl Block {
                     curr_block_id = next_block_id;
                     next_block_id = cfg.label_builder.block_id();
                 }
-                _ => current_stmts.push(Statement::lower(cfg, stmt)),
+                _ => current_stmts.extend(Statement::lower(cfg, stmt)),
             }
         }
 
@@ -333,11 +430,11 @@ impl Block {
 #[derive(Debug)]
 struct Function {
     id: FnID,
-    params: Vec<ParamID>,
+    params: Vec<(ParamID, MIRType)>,
     entry_block: BlockID,
     blocks: Vec<Block>,
     ret_type: Option<MIRType>,
-    visibility: bool,
+    visible: bool,
 }
 
 impl Function {
@@ -347,20 +444,63 @@ impl Function {
         arguments: Vec<TypedVar>,
         body: TypedStatement,
         ret_type: Option<Type>,
+        visible: bool,
     ) -> Self {
-        let mir_args: Vec<MIRType> = arguments
+        let mir_args = arguments
             .into_iter()
-            .map(|var| MIRType::from(var.ty))
+            .map(|var| {
+                let param_id = cfg.label_builder.param_id();
+                let mir_ty = MIRType::from(var.ty);
+
+                (param_id, mir_ty)
+            })
             .collect();
 
-        todo!()
+        let blocks = Block::lower(cfg, body);
+        // safety: guaranteed at least one block, i think??
+        let entry_block_id = blocks[0].id;
+
+        // last block should always end in a return, and we can check that for safety in testing
+        #[cfg(debug_assertions)]
+        let last_block = blocks.last().unwrap();
+
+        #[cfg(debug_assertions)]
+        match &ret_type {
+            Some(_ty) => {
+                if let Trans::Return { value } = &last_block.trans {
+                    assert!(value.is_some());
+                } else {
+                    panic!("expected return type, got: {:?}", last_block.trans);
+                }
+            }
+            None => {
+                if let Trans::Return { value } = &last_block.trans {
+                    assert!(value.is_none());
+                } else {
+                    panic!("expected return type, got: {:?}", last_block.trans);
+                }
+            }
+        };
+
+        let ret_type = ret_type.map(MIRType::from);
+
+        Function {
+            id: fn_id,
+            params: mir_args,
+            entry_block: entry_block_id,
+            blocks,
+            ret_type,
+            visible,
+        }
     }
 }
 
 #[derive(Default, Debug)]
 pub struct Cfg {
+    tyctx: TyCtx,
     label_builder: LabelBuilder,
     fn_id_map: HashMap<String, FnID>,
+    var_data_map: HashMap<String, Data>,
     functions: Vec<Function>,
     user_def_types: HashMap<String, MIRType>,
     // constraint: this MIRType is guaranteed to be MIRType::Fn
@@ -368,8 +508,11 @@ pub struct Cfg {
 }
 
 impl Cfg {
-    fn new() -> Cfg {
-        Cfg::default()
+    fn new(tyctx: TyCtx) -> Cfg {
+        Self {
+            tyctx,
+            ..Default::default()
+        }
     }
 
     fn fn_by_id(&self, fn_id: FnID) -> &Function {
@@ -407,8 +550,8 @@ impl Cfg {
     }
 }
 
-pub fn generate_mir(module: Module) -> Cfg {
-    let mut cfg = Cfg::new();
+pub fn generate_mir(module: Module, tyctx: TyCtx) -> Cfg {
+    let mut cfg = Cfg::new(tyctx);
 
     for decl in module.decls.into_iter() {
         match decl.kind {
@@ -423,11 +566,12 @@ pub fn generate_mir(module: Module) -> Cfg {
                 ret_type,
             } => {
                 let fn_id = cfg.assign_fn_id(name);
-                let mir_fn = Function::lower(&mut cfg, fn_id, arguments, body, ret_type);
+                let mir_fn =
+                    Function::lower(&mut cfg, fn_id, arguments, body, ret_type, decl.visible);
                 cfg.functions.push(mir_fn);
             }
         }
     }
 
-    todo!()
+    cfg
 }
