@@ -1039,7 +1039,10 @@ fn extract_module(
     Ok((module, filt_decls))
 }
 
-pub fn type_check(decls: Vec<Spanned<Declaration>>, imports: Vec<TypedDecl>) -> TypeResult<Module> {
+pub fn type_check<'a>(
+    decls: Vec<Spanned<Declaration>>,
+    imports: Vec<TypedDecl>,
+) -> TypeResult<(Module, ScopedCtx<'a>)> {
     let mut ctx = TyCtx::new();
 
     let (mut module, decls) = extract_module(decls)?;
@@ -1060,5 +1063,5 @@ pub fn type_check(decls: Vec<Spanned<Declaration>>, imports: Vec<TypedDecl>) -> 
     module.decls = ty_decls;
     module.exports = exports;
 
-    Ok(module)
+    Ok((module, ctx))
 }

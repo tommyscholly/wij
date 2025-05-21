@@ -4,7 +4,9 @@ use ariadne::{ColorGenerator, Label, Report, ReportKind, Source};
 use clap::Parser as Clap;
 use rand::{Rng, rng};
 
-use wij_core::{AstError, Module, Parser, tokenize, type_check, use_analysis};
+use wij_core::{
+    AstError, Module, Parser, ScopedCtx, build_ssa, tokenize, type_check, use_analysis,
+};
 
 #[derive(Clap)]
 struct Options {
@@ -57,9 +59,9 @@ fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl AstErro
 
 // This is a special type alias, where the directly compiled file is always first
 // and any dependent modules are appended
-pub type ResultingModules = Vec<Module>;
+pub type ResultingModules<'a> = Vec<(Module, ScopedCtx<'a>)>;
 
-fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
+fn compile_file<'a>(file: &str, options: &Options) -> Option<ResultingModules<'a>> {
     let src = std::fs::read_to_string(file).unwrap();
     let src = src.trim();
     let tokens = tokenize(src)
@@ -103,10 +105,10 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
         let module_files = use_analysis::files_in_module(&module_file_path);
         match module_files {
             Ok(module_files) => {
-                let module = compile_module(module_name, module_files, options);
+                let (module, ctx) = compile_module(module_name, module_files, options);
                 imports.append(&mut module.exports.clone());
 
-                additional_modules.push(module);
+                additional_modules.push((module, ctx));
             }
             Err(e) => {
                 panic!("Error loading module {module_name}: {e}");
@@ -129,10 +131,15 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
 
     let mut resulting_modules = vec![module];
     resulting_modules.append(&mut additional_modules);
+
     Some(resulting_modules)
 }
 
-fn compile_module(module_name: String, module_files: Vec<PathBuf>, options: &Options) -> Module {
+fn compile_module<'a>(
+    module_name: String,
+    module_files: Vec<PathBuf>,
+    options: &Options,
+) -> (Module, ScopedCtx<'a>) {
     let mut module = Module::new(module_name);
     let mut dependent_modules = Vec::new();
     for file in module_files {

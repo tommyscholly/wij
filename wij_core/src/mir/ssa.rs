@@ -180,7 +180,7 @@ struct Function {
 }
 
 #[derive(Debug)]
-struct Module {
+pub struct Module {
     functions: HashMap<FnID, Function>,
     entry_function: Option<FnID>,
 
@@ -213,7 +213,7 @@ impl SSABuilder {
         Self::default()
     }
 
-    fn build_module(mut self, typed_module: TyModule, tyctx: TyCtx) -> Result<Module, String> {
+    fn build_module(mut self, typed_module: TyModule, tyctx: ScopedCtx) -> Module {
         let mut module = Module {
             functions: HashMap::new(),
             entry_function: None,
@@ -248,7 +248,7 @@ impl SSABuilder {
             }
         }
 
-        Ok(module)
+        module
     }
 
     fn lower_function(
@@ -349,11 +349,9 @@ impl SSABuilder {
             }
 
             StatementKind::Return(expr_opt) => {
-                let value_id = if let Some(expr) = expr_opt {
-                    Some(self.lower_expression(module, function, expr))
-                } else {
-                    None
-                };
+                let value_id = expr_opt
+                    .as_ref()
+                    .map(|expr| self.lower_expression(module, function, expr));
 
                 if let Some(block_id) = self.current_block {
                     if let Some(block) = function.blocks.get_mut(&block_id) {
@@ -750,4 +748,9 @@ impl SSABuilder {
         self.next_block_id += 1;
         id
     }
+}
+
+pub fn build_ssa(typed_module: TyModule, tyctx: ScopedCtx) -> Module {
+    let ssa_builder = SSABuilder::new();
+    ssa_builder.build_module(typed_module, tyctx)
 }
