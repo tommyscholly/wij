@@ -1,16 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinOp, Literal, Type, typed::Module as TyModule, typed::*};
+use crate::ast::{BinOp, Literal, Type, typed::*};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum MIRType {
+pub(crate) enum MIRType {
     Byte,
     Int,
     Bool,
     Str,
     Unit,
     Array(Box<MIRType>),
-    Record(String, Vec<(String, MIRType)>),
+    Record(Vec<(String, MIRType)>),
     Fn(Vec<MIRType>, Box<MIRType>),
     Ptr,
 }
@@ -24,8 +24,6 @@ fn convert_type(ty: &Type) -> MIRType {
         Type::Unit => MIRType::Unit,
         Type::Array(elem_ty) => MIRType::Array(Box::new(convert_type(elem_ty))),
         Type::Record(fields) => MIRType::Record(
-            // todo: fix this
-            "anonymous".to_string(),
             fields
                 .iter()
                 .map(|(name, ty)| (name.clone(), convert_type(ty)))
@@ -35,9 +33,9 @@ fn convert_type(ty: &Type) -> MIRType {
             let param_types = sig.param_types.iter().map(convert_type).collect();
             MIRType::Fn(param_types, Box::new(convert_type(&sig.ret_type)))
         }
-        Type::UserDef(name) => {
-            // todo: fix this placeholder
-            MIRType::Record(name.clone(), vec![])
+        Type::UserDef(_name) => {
+            // todo: fix this by passing in the program
+            todo!()
         }
         Type::Ptr(_) => MIRType::Ptr,
         _ => MIRType::Unit, // todo: handle other types
@@ -45,20 +43,21 @@ fn convert_type(ty: &Type) -> MIRType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-struct ValueID(u32);
+pub(crate) struct ValueID(pub(crate) u32);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-struct BlockID(u32);
+pub(crate) struct BlockID(pub(crate) u32);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-struct FnID(u32);
+pub(crate) struct FnID(pub(crate) u32);
 
 #[derive(Debug, Clone)]
 struct Value {
     id: ValueID,
+    #[allow(unused)]
     ty: MIRType,
 }
 
 #[derive(Debug, Clone)]
-enum Operation {
+pub(crate) enum Operation {
     IntConst(i32),
     BoolConst(bool),
     // unsure if i will actually be doing str constants
@@ -73,7 +72,9 @@ enum Operation {
 
     // array/record operations, very similar to LLVM
     GetElementPtr(ValueID, Vec<ValueID>), // base + indices
-    ExtractValue(ValueID, usize),         // for records
+    #[allow(unused)]
+    ExtractValue(ValueID, usize), // for records
+    #[allow(unused)]
     InsertValue(ValueID, ValueID, usize), // for records (base, new_value, field_idx)
 
     BinOp {
@@ -93,7 +94,7 @@ enum Operation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BinOpKind {
+pub(crate) enum BinOpKind {
     Add,
     Sub,
     Mul,
@@ -131,7 +132,7 @@ impl From<&BinOp> for BinOpKind {
 
 // terminator instruction for a basic block
 #[derive(Debug, Clone)]
-enum Terminator {
+pub(crate) enum Terminator {
     Return(Option<ValueID>),
     // goto, but called br in llvm naming style
     Branch(BlockID),
@@ -140,11 +141,13 @@ enum Terminator {
         true_block: BlockID,
         false_block: BlockID,
     },
+    #[allow(unused)]
     Switch {
         value: ValueID,
         cases: Vec<(i32, BlockID)>,
         default: BlockID,
     },
+    #[allow(unused)]
     Call {
         function: FnID,
         args: Vec<ValueID>,
@@ -154,35 +157,43 @@ enum Terminator {
 }
 
 #[derive(Debug)]
-struct Block {
-    id: BlockID,
-    instructions: Vec<(ValueID, Operation)>,
-    terminator: Terminator,
+pub(crate) struct Block {
+    pub(crate) id: BlockID,
+    pub(crate) instructions: Vec<(ValueID, Operation)>,
+    pub(crate) terminator: Terminator,
     // unsure if i'm doing analysis, but if i am, this will be needed
-    predecessors: HashSet<BlockID>,
+    #[allow(unused)]
+    pub(crate) predecessors: HashSet<BlockID>,
 }
 
 #[derive(Debug)]
-struct Function {
-    id: FnID,
-    name: String,
-    params: Vec<(String, MIRType)>,
-    return_type: Option<MIRType>,
+pub(crate) struct Function {
+    #[allow(unused)]
+    pub(crate) id: FnID,
+    pub(crate) name: String,
+    pub(crate) params: Vec<(String, MIRType)>,
+    #[allow(unused)]
+    pub(crate) return_type: Option<MIRType>,
 
-    entry_block: BlockID,
-    blocks: HashMap<BlockID, Block>,
+    pub(crate) entry_block: BlockID,
+    pub(crate) blocks: HashMap<BlockID, Block>,
 
     // unsure if i'm doing analysis, but dominator tree is needed for most cfg analysis
-    dominators: HashMap<BlockID, HashSet<BlockID>>,
+    #[allow(unused)]
+    pub(crate) dominators: HashMap<BlockID, HashSet<BlockID>>,
 
     // map var names to value ids
-    symbols: HashMap<String, ValueID>,
+    pub(crate) symbols: HashMap<String, ValueID>,
 }
 
-#[derive(Debug)]
-pub struct Module {
-    functions: HashMap<FnID, Function>,
-    entry_function: Option<FnID>,
+#[derive(Debug, Default)]
+pub struct Program {
+    pub name: String,
+    pub(crate) functions: HashMap<FnID, Function>,
+    // allows faster fn lookup, but more importantly, recursive functions
+    fns_by_name: HashMap<String, FnID>,
+
+    pub(crate) entry_function: Option<FnID>,
 
     types: HashMap<String, MIRType>,
     externals: HashMap<String, FunctionType>,
@@ -205,55 +216,78 @@ struct SSABuilder {
 
     var_defs: HashMap<String, ValueID>,
 
+    #[allow(unused)]
     incomplete_phis: Vec<(ValueID, String)>,
+
+    entry_fn_name: Option<String>,
 }
 
 impl SSABuilder {
-    fn new() -> Self {
-        Self::default()
+    fn new(entry_fn_name: Option<String>) -> Self {
+        Self {
+            entry_fn_name,
+            ..Default::default()
+        }
     }
 
-    fn build_module(mut self, typed_module: TyModule, tyctx: ScopedCtx) -> Module {
-        let mut module = Module {
-            functions: HashMap::new(),
-            entry_function: None,
-            types: HashMap::new(),
-            externals: HashMap::new(),
-        };
-
-        self.register_types(&mut module, &typed_module);
+    fn build_module(&mut self, typed_module: Module, program: &mut Program) {
+        self.register_types(program, &typed_module);
 
         for decl in &typed_module.decls {
             match &decl.kind {
+                DeclKind::Procedures(_, fns) => {
+                    for fn_decl in fns {
+                        let DeclKind::Function {
+                            name,
+                            arguments,
+                            body,
+                            ret_type,
+                        } = &fn_decl.kind
+                        else {
+                            panic!("help")
+                        };
+
+                        println!("lowering procedure: {}", name);
+                        self.lower_function(program, name, arguments, body, ret_type.clone());
+                    }
+                }
                 DeclKind::Function {
                     name,
                     arguments,
                     body,
                     ret_type,
                 } => {
+                    println!("lowering fn: {}", name);
                     let fn_id =
-                        self.lower_function(&mut module, name, arguments, body, ret_type.clone());
+                        self.lower_function(program, name, arguments, body, ret_type.clone());
 
                     // todo: fix this to look for main as the entry function
-                    if module.entry_function.is_none() {
-                        module.entry_function = Some(fn_id);
+                    if program.entry_function.is_none() {
+                        match &self.entry_fn_name {
+                            Some(fnname) => {
+                                if fnname == name {
+                                    program.entry_function = Some(fn_id);
+                                }
+                            }
+                            None => {
+                                program.entry_function = Some(fn_id);
+                            }
+                        }
                     }
                 }
                 DeclKind::ForeignDeclarations(fds) => {
                     for (name, sig) in fds {
-                        self.register_external(&mut module, name, sig);
+                        self.register_external(program, name, sig);
                     }
                 }
                 _ => {}
             }
         }
-
-        module
     }
 
     fn lower_function(
         &mut self,
-        module: &mut Module,
+        program: &mut Program,
         name: &str,
         arguments: &[TypedVar],
         body: &TypedStatement,
@@ -299,7 +333,10 @@ impl SSABuilder {
             function.symbols.insert(arg.id.clone(), param_value.id);
         }
 
-        self.lower_statement(module, &mut function, body);
+        program.fns_by_name.insert(name.to_string(), fn_id);
+        function.blocks.insert(entry_block, entry);
+        self.create_new_block(&mut function);
+        self.lower_statement(program, &mut function, body);
 
         // if a block has no terminator, it is a return that has no value
         if let Some(block_id) = self.current_block {
@@ -310,20 +347,45 @@ impl SSABuilder {
             }
         }
 
-        function.blocks.insert(entry_block, entry);
-
         // all phis should be resolvable by the end of a function
         self.resolve_phis(&mut function);
 
-        module.functions.insert(fn_id, function);
+        program.functions.insert(fn_id, function);
         fn_id
     }
 
-    fn lower_statement(&mut self, module: &Module, function: &mut Function, stmt: &TypedStatement) {
+    fn create_new_block(&mut self, function: &mut Function) -> BlockID {
+        let block_id = self.new_block();
+        if let Some(curr_block_id) = self.current_block {
+            if let Some(block) = function.blocks.get_mut(&curr_block_id) {
+                if matches!(block.terminator, Terminator::Unreachable) {
+                    block.terminator = Terminator::Branch(block_id);
+                }
+            }
+        }
+
+        let block = Block {
+            id: block_id,
+            instructions: Vec::new(),
+            terminator: Terminator::Unreachable,
+            predecessors: HashSet::from_iter(vec![self.current_block.unwrap()]),
+        };
+        function.blocks.insert(block_id, block);
+        self.current_block = Some(block_id);
+
+        block_id
+    }
+
+    fn lower_statement(
+        &mut self,
+        program: &Program,
+        function: &mut Function,
+        stmt: &TypedStatement,
+    ) {
         match &stmt.kind {
             StatementKind::Let { var, value } => {
                 if let Some(expr) = value {
-                    let value_id = self.lower_expression(module, function, expr);
+                    let value_id = self.lower_expression(program, function, expr);
 
                     self.var_defs.insert(var.id.clone(), value_id);
                     function.symbols.insert(var.id.clone(), value_id);
@@ -344,14 +406,14 @@ impl SSABuilder {
 
             StatementKind::Block(statements) => {
                 for sub_stmt in statements {
-                    self.lower_statement(module, function, sub_stmt);
+                    self.lower_statement(program, function, sub_stmt);
                 }
             }
 
             StatementKind::Return(expr_opt) => {
                 let value_id = expr_opt
                     .as_ref()
-                    .map(|expr| self.lower_expression(module, function, expr));
+                    .map(|expr| self.lower_expression(program, function, expr));
 
                 if let Some(block_id) = self.current_block {
                     if let Some(block) = function.blocks.get_mut(&block_id) {
@@ -367,7 +429,7 @@ impl SSABuilder {
                 then_block,
                 else_block,
             } => {
-                let cond_value = self.lower_expression(module, function, condition);
+                let cond_value = self.lower_expression(program, function, condition);
 
                 let then_block_id = self.new_block();
                 let else_block_id = self.new_block();
@@ -415,12 +477,12 @@ impl SSABuilder {
                 let outer_vars = self.var_defs.clone();
 
                 self.current_block = Some(then_block_id);
-                self.lower_statement(module, function, then_block);
+                self.lower_statement(program, function, then_block);
                 let then_vars = self.var_defs.clone();
 
                 self.current_block = Some(else_block_id);
                 if let Some(else_stmt) = else_block {
-                    self.lower_statement(module, function, else_stmt);
+                    self.lower_statement(program, function, else_stmt);
                 }
                 let else_vars = self.var_defs.clone();
 
@@ -442,7 +504,7 @@ impl SSABuilder {
                 }
 
                 for var in all_modified_vars {
-                    let var_type = if let Some(value_id) =
+                    let var_type = if let Some(_value_id) =
                         then_vars.get(&var).or_else(|| else_vars.get(&var))
                     {
                         // todo: fix these place holders
@@ -479,10 +541,10 @@ impl SSABuilder {
             }
 
             StatementKind::Expression(expr) => {
-                self.lower_expression(module, function, expr);
+                self.lower_expression(program, function, expr);
             }
-
             _ => {
+                println!("need to handle stmt: {:?}", stmt);
                 todo!()
             }
         }
@@ -490,7 +552,7 @@ impl SSABuilder {
 
     fn lower_expression(
         &mut self,
-        module: &Module,
+        program: &Program,
         function: &mut Function,
         expr: &TypedExpression,
     ) -> ValueID {
@@ -518,8 +580,8 @@ impl SSABuilder {
             }),
 
             ExpressionKind::BinOp(op, lhs, rhs) => {
-                let lhs_value = self.lower_expression(module, function, lhs);
-                let rhs_value = self.lower_expression(module, function, rhs);
+                let lhs_value = self.lower_expression(program, function, lhs);
+                let rhs_value = self.lower_expression(program, function, rhs);
 
                 let op_kind = BinOpKind::from(op);
 
@@ -537,25 +599,24 @@ impl SSABuilder {
             ExpressionKind::FnCall(func_name, args) => {
                 let arg_values = args
                     .iter()
-                    .map(|arg| self.lower_expression(module, function, arg))
+                    .map(|arg| self.lower_expression(program, function, arg))
                     .collect();
 
-                let fn_id = module
-                    .functions
-                    .iter()
-                    .find_map(|(id, f)| {
-                        if f.name == *func_name {
-                            Some(*id)
-                        } else {
-                            None
-                        }
-                    })
-                    .expect("function should exist if we are trying to call it");
+                let fn_id = program
+                    .fns_by_name
+                    .get(func_name.as_str())
+                    .unwrap_or_else(|| {
+                        println!("{:?}", program.fns_by_name);
+                        panic!(
+                            "function {} should exist if we are trying to call it",
+                            func_name.as_str(),
+                        )
+                    });
 
                 self.add_instruction_to_current_block(
                     function,
                     Operation::Call {
-                        function: fn_id,
+                        function: *fn_id,
                         args: arg_values,
                     },
                     convert_type(&expr.ty),
@@ -576,7 +637,7 @@ impl SSABuilder {
                 );
 
                 for (i, elem) in elements.iter().enumerate() {
-                    let elem_value = self.lower_expression(module, function, elem);
+                    let elem_value = self.lower_expression(program, function, elem);
 
                     let idx_value = self.add_instruction_to_current_block(
                         function,
@@ -601,8 +662,8 @@ impl SSABuilder {
             }
 
             ExpressionKind::Idx(array, index) => {
-                let array_value = self.lower_expression(module, function, array);
-                let index_value = self.lower_expression(module, function, index);
+                let array_value = self.lower_expression(program, function, array);
+                let index_value = self.lower_expression(program, function, index);
 
                 let elem_ptr = self.add_instruction_to_current_block(
                     function,
@@ -618,14 +679,14 @@ impl SSABuilder {
             }
 
             ExpressionKind::FieldAccess(record, field_name) => {
-                let record_value = self.lower_expression(module, function, record);
+                let record_value = self.lower_expression(program, function, record);
                 let Type::UserDef(record_name) = &expr.ty else {
                     // this should be unreachable due to type checking
                     unreachable!();
                 };
 
                 let field_idx = self
-                    .record_field_idx(module, record_name, field_name)
+                    .record_field_idx(program, record_name, field_name)
                     .unwrap() as i32;
 
                 // deref the ptr
@@ -654,7 +715,43 @@ impl SSABuilder {
                     convert_type(&expr.ty),
                 )
             }
-            _ => {
+            ExpressionKind::RecordInit(record_type, assignments) => {
+                let record_mir_ty = program
+                    .types
+                    .get(record_type)
+                    .unwrap_or_else(|| panic!("unbound type {}", record_type));
+
+                let record_ptr = self.add_instruction_to_current_block(
+                    function,
+                    Operation::Alloca(record_mir_ty.clone()),
+                    MIRType::Ptr,
+                );
+
+                for (field_name, expr) in assignments {
+                    let field_value = self.lower_expression(program, function, expr);
+                    let field_idx = self
+                        .record_field_idx(program, record_type, field_name)
+                        .unwrap_or_else(|| {
+                            panic!("field {} not found in record {}", field_name, record_type)
+                        });
+
+                    let insert_val = Operation::InsertValue(record_ptr, field_value, field_idx);
+
+                    self.add_instruction_to_current_block(function, insert_val, MIRType::Unit);
+                }
+
+                record_ptr
+            }
+            ExpressionKind::Self_ => {
+                let self_ptr = function.symbols.get("self").unwrap_or_else(|| {
+                    panic!("self not found in function {}", function.name);
+                });
+
+                *self_ptr
+            }
+            e => {
+                println!("need to handle expr: {:#?}", e);
+
                 todo!()
             }
         }
@@ -685,33 +782,37 @@ impl SSABuilder {
         value_id
     }
 
-    fn register_external(&mut self, module: &mut Module, name: &str, sig: &FunctionSignature) {
+    fn register_external(&mut self, program: &mut Program, name: &str, sig: &FunctionSignature) {
         let param_types = sig.param_types.iter().map(convert_type).collect();
         let return_type = convert_type(&sig.ret_type);
-        module.externals.insert(
+        // believe externals still need fn_ids
+        let external_fn_id = FnID(self.next_fn_id);
+        self.next_fn_id += 1;
+
+        program.externals.insert(
             name.to_string(),
             FunctionType {
                 params: param_types,
                 return_type: Some(return_type),
             },
         );
+
+        program.fns_by_name.insert(name.to_string(), external_fn_id);
     }
 
     fn record_field_idx(
         &self,
-        module: &Module,
+        program: &Program,
         record_name: &str,
         field_name: &str,
     ) -> Option<usize> {
-        match module.types.get(record_name) {
-            Some(MIRType::Record(_, fields)) => {
-                fields.iter().position(|(name, _)| name == field_name)
-            }
+        match program.types.get(record_name) {
+            Some(MIRType::Record(fields)) => fields.iter().position(|(name, _)| name == field_name),
             _ => None,
         }
     }
 
-    fn register_types(&mut self, module: &mut Module, typed_module: &TyModule) {
+    fn register_types(&mut self, program: &mut Program, typed_module: &Module) {
         for decl in &typed_module.decls {
             match &decl.kind {
                 DeclKind::Record { name, fields } => {
@@ -720,11 +821,14 @@ impl SSABuilder {
                         .map(|(field_name, ty)| (field_name.clone(), convert_type(ty)))
                         .collect();
 
-                    module
+                    program
                         .types
-                        .insert(name.clone(), MIRType::Record(name.clone(), mir_fields));
+                        .insert(name.clone(), MIRType::Record(mir_fields));
                 }
-                DeclKind::Enum { name, variants } => {
+                DeclKind::Enum {
+                    name: _,
+                    variants: _,
+                } => {
                     // need to figure out how I am representing enums
                     todo!()
                 }
@@ -733,8 +837,10 @@ impl SSABuilder {
         }
     }
 
-    fn resolve_phis(&mut self, function: &mut Function) {
-        todo!()
+    fn resolve_phis(&mut self, _function: &mut Function) {
+        // todo
+        #[allow(clippy::needless_return)]
+        return;
     }
 
     fn new_value(&mut self, ty: MIRType) -> Value {
@@ -750,7 +856,19 @@ impl SSABuilder {
     }
 }
 
-pub fn build_ssa(typed_module: TyModule, tyctx: ScopedCtx) -> Module {
-    let ssa_builder = SSABuilder::new();
-    ssa_builder.build_module(typed_module, tyctx)
+pub fn build_ssa(mut modules: Vec<Module>) -> Program {
+    let mut program = Program {
+        name: "todo".to_string(),
+        functions: HashMap::new(),
+        fns_by_name: HashMap::new(),
+        entry_function: None,
+        types: HashMap::new(),
+        externals: HashMap::new(),
+    };
+
+    let mut ssa_builder = SSABuilder::new(Some("main".to_string()));
+    while let Some(typed_module) = modules.pop() {
+        ssa_builder.build_module(typed_module, &mut program);
+    }
+    program
 }

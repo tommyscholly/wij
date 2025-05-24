@@ -18,7 +18,7 @@ pub enum Type {
     Fn(Box<FunctionSignature>),
     UserDef(String),
     Record(Vec<(String, Type)>),
-    Generic(char),
+    Generic(String),
     DataConstructor(String, Option<Box<Type>>, String),
     // compiler generated
     Any,
@@ -88,6 +88,12 @@ impl Parseable for Type {
                 let _ = parser.expect_next(Token::RBracket)?;
                 let span = span.start..span_end.end;
                 Ok((Type::Array(Box::new(ty)), span))
+            }
+            Some((Token::Tick, span)) => {
+                parser.pop_next();
+                let (c, span_end) = parser.expect_ident()?;
+                let span = span.start..span_end.end;
+                Ok((Type::Generic(c), span))
             }
             _ => {
                 let (kw, span) = parser.expect_kw()?;

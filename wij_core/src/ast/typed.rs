@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
 use crate::{
-    AstError,
+    WijError,
     ast::{self, Type},
 };
 
@@ -9,6 +9,7 @@ use super::{BinOp, Declaration, Expression, Function, Literal, Span, Spanned, St
 
 #[derive(Debug)]
 pub enum TypeErrorKind {
+    NoReturn,
     UndefinedVariable(String),
     UndefinedType(String),
     UndefinedFunction(String),
@@ -36,6 +37,7 @@ impl Display for TypeErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use TypeErrorKind::*;
         match self {
+            NoReturn => write!(f, "No return statement"),
             InvalidType(ty) => write!(f, "Invalid type `{}`", ty),
             UndefinedVariable(ident) => write!(f, "Undefined variable `{}`", ident),
             UndefinedType(ident) => write!(f, "Undefined type `{}`", ident),
@@ -84,7 +86,7 @@ impl TypeError {
     }
 }
 
-impl AstError for TypeError {
+impl WijError for TypeError {
     fn span(&self) -> Option<Span> {
         Some(self.span.clone())
     }
@@ -137,6 +139,7 @@ pub enum StatementKind {
     Return(Option<TypedExpression>),
     Break,
     Continue,
+    // the optional type is the return type of the block
     Block(Vec<TypedStatement>),
     If {
         condition: TypedExpression,
@@ -167,6 +170,40 @@ pub struct TypedStatement {
     pub span: Span,
 }
 
+impl TypedStatement {
+    fn has_return(&self) -> Option<Type> {
+        match &self.kind {
+            StatementKind::Return(ty_expr) => match ty_expr {
+                Some(ty_expr) => Some(ty_expr.ty.clone()),
+                None => Some(Type::Unit),
+            },
+            StatementKind::Block(stmts) => stmts.iter().find_map(|stmt| stmt.has_return()),
+            StatementKind::If {
+                condition: _,
+                then_block,
+                else_block,
+            } => {
+                let then_block_ret = then_block.has_return();
+                let else_block_ret = else_block.as_ref().and_then(|b| b.has_return());
+
+                match (then_block_ret, else_block_ret) {
+                    (Some(ty), None) => Some(ty),
+                    (None, Some(ty)) => Some(ty),
+                    (Some(ty), Some(ty2)) => {
+                        if ty == ty2 {
+                            Some(ty)
+                        } else {
+                            panic!("todo: fill in mismatching return types")
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExpressionKind {
     Literal(Literal),
@@ -178,6 +215,7 @@ pub enum ExpressionKind {
     RecordInit(String, Vec<(String, TypedExpression)>),
     DataConstructor(String, Option<Box<TypedExpression>>),
     Idx(Box<TypedExpression>, Box<TypedExpression>),
+    Self_,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -224,7 +262,7 @@ pub struct TypedDecl {
 }
 
 impl TypedDecl {
-    fn name(&self) -> Option<&str> {
+    pub fn name(&self) -> Option<&str> {
         match &self.kind {
             DeclKind::Function { name, .. } => Some(name),
             DeclKind::Record { name, .. } => Some(name),
@@ -255,7 +293,12 @@ impl Module {
     }
 
     pub fn combine(&mut self, mut other: Module) {
-        self.decls.append(&mut other.decls);
+        let mut new_decls = Vec::new();
+        // prepend the other decls so imports take precedence
+        new_decls.append(&mut other.decls);
+        new_decls.append(&mut self.decls);
+        self.decls = new_decls;
+
         self.exports.append(&mut other.exports);
     }
 }
@@ -372,17 +415,92 @@ fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>, inferred_ty: Type) -> TypeRe
 
 fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<TypedExpression> {
     let expr = match expr.0 {
-        Expression::MethodCall(_, _, _) => todo!(),
+        Expression::Self_ => {
+            let ty = match ctx.var_ty("self") {
+                Some(ty) => ty.clone(),
+                None => {
+                    return Err(TypeError::new(
+                        TypeErrorKind::UndefinedVariable("self".to_string()),
+                        expr.1,
+                    ));
+                }
+            };
+            TypedExpression {
+                ty: ty.clone(),
+                kind: ExpressionKind::Self_,
+                span: expr.1,
+            }
+        }
+        Expression::MethodCall(structure, method_name, args) => {
+            let structure = type_expr(ctx, *structure)?;
+            let structure_ty = &structure.ty;
+
+            let mut ty_args = vec![];
+            ty_args.push(structure.clone());
+            for arg in args {
+                ty_args.push(type_expr(ctx, arg)?);
+            }
+
+            let method_name = format!("{}::{}", structure_ty, method_name);
+            let fn_type = match ctx.get_user_def_type(&method_name) {
+                None => {
+                    return Err(TypeError::new(
+                        TypeErrorKind::UndefinedFunction(method_name),
+                        expr.1,
+                    ));
+                }
+                Some(t) => t,
+            };
+
+            let ret_ty = if let Type::Fn(fn_) = fn_type {
+                let FunctionSignature {
+                    param_types,
+                    ret_type,
+                } = *fn_;
+
+                if param_types.len() != ty_args.len() {
+                    return Err(TypeError::new(
+                        TypeErrorKind::FunctionArityMismatch {
+                            expected: param_types.len() as u32,
+                            found: ty_args.len() as u32,
+                        },
+                        expr.1,
+                    ));
+                }
+
+                for (arg, ty_arg) in param_types.iter().zip(ty_args.iter()) {
+                    if arg != &ty_arg.ty {
+                        return Err(TypeError::new(
+                            TypeErrorKind::TypeMismatch {
+                                expected: arg.clone(),
+                                found: ty_arg.ty.clone(),
+                            },
+                            expr.1,
+                        ));
+                    }
+                }
+                ret_type
+            } else {
+                return Err(TypeError::new(
+                    TypeErrorKind::IdentUsedAsFn(method_name),
+                    expr.1,
+                ));
+            };
+
+            TypedExpression {
+                ty: ret_ty,
+                kind: ExpressionKind::FnCall(method_name, ty_args),
+                span: expr.1,
+            }
+        }
         Expression::Idx(arr, idx) => {
             let arr = type_expr(ctx, *arr)?;
-            println!("arr ctx {ctx:?}");
-            println!("arr {arr:?}");
             let expression_ty = match &arr.ty {
                 Type::Array(ty) => *ty.clone(),
                 _ => {
                     let err = TypeError::new(
                         TypeErrorKind::TypeMismatch {
-                            expected: Type::Array(Box::new(Type::Generic('a'))),
+                            expected: Type::Array(Box::new(Type::Generic("a".to_string()))),
                             found: arr.ty.clone(),
                         },
                         expr.1,
@@ -571,7 +689,6 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
         Expression::FieldAccess(expr, field_name) => {
             let expr_span = expr.1.clone();
             let ty_expr = type_expr(ctx, *expr)?;
-            println!("ty: {:?}", ty_expr.ty);
             let ty = if let Type::UserDef(name) = &ty_expr.ty {
                 &ctx.get_user_def_type(name)
                     .expect("userdef types should have been registered")
@@ -579,7 +696,6 @@ fn type_expr(ctx: &mut ScopedCtx, expr: Spanned<Expression>) -> TypeResult<Typed
                 &ty_expr.ty
             };
             let field_ty = if let Type::Record(fields) = ty {
-                println!("fields: {:?}", fields);
                 fields.iter().find_map(|(var, ty)| {
                     if *var == field_name {
                         Some(ty.clone())
@@ -729,7 +845,6 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
                 (None, Type::Any)
             };
 
-            print!("var name {}: ", var.0.name);
             let var_ty = var.0.ty.clone();
             let ty_var = match type_var(ctx, var, inferred_ty) {
                 Ok(ty_var) => ty_var,
@@ -749,7 +864,6 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
                 },
             };
 
-            println!("ty var: {ty_var:?}");
             TypedStatement {
                 kind: StatementKind::Let {
                     var: ty_var,
@@ -775,8 +889,11 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
         Statement::Block(stmts) => {
             let mut ty_stmts = vec![];
             let mut child_ctx = ctx.child();
+
             for stmt in stmts {
-                ty_stmts.push(type_stmt(&mut child_ctx, stmt)?);
+                let ty_stmt = type_stmt(&mut child_ctx, stmt)?;
+
+                ty_stmts.push(ty_stmt);
             }
 
             TypedStatement {
@@ -825,7 +942,12 @@ fn type_stmt(ctx: &mut ScopedCtx, stmt: Spanned<Statement>) -> TypeResult<TypedS
     Ok(stmt)
 }
 
-pub fn type_fn(ctx: &mut ScopedCtx, fn_def: Function, span: Span) -> TypeResult<TypedDecl> {
+pub fn type_fn(
+    ctx: &mut ScopedCtx,
+    fn_def: Function,
+    span: Span,
+    self_arg: Option<Type>,
+) -> TypeResult<TypedDecl> {
     let Function {
         name,
         arguments,
@@ -834,9 +956,58 @@ pub fn type_fn(ctx: &mut ScopedCtx, fn_def: Function, span: Span) -> TypeResult<
     } = fn_def;
     let mut body_ctx = ctx.child();
     let mut args = vec![];
+    if let Some(self_ty) = self_arg {
+        let ty_var = TypedVar {
+            id: "self".to_string(),
+            ty: self_ty.clone(),
+            // span does not matter
+            span: Span::default(),
+        };
+        body_ctx.insert_var("self".to_string(), self_ty);
+        args.push(ty_var);
+    }
+
     for var in arguments {
         let ity = var.0.ty.clone().unwrap();
         args.push(type_var(&mut body_ctx, var, ity)?);
+    }
+
+    let body = type_stmt(&mut body_ctx, body)?;
+    let ret = match body.has_return() {
+        Some(ty) => ty,
+        None => {
+            if ret_type.is_some() {
+                return Err(TypeError::new(TypeErrorKind::NoReturn, body.span));
+            }
+
+            Type::Unit
+        }
+    };
+
+    if !(ret == Type::Unit) && ret_type.is_none() {
+        return Err(TypeError::new(
+            TypeErrorKind::TypeMismatch {
+                expected: Type::Unit,
+                found: ret.clone(),
+            },
+            body.span,
+        ));
+    } else {
+        #[allow(clippy::single_match)]
+        match ret_type.as_ref() {
+            Some(ret_type) => {
+                if ret != *ret_type {
+                    return Err(TypeError::new(
+                        TypeErrorKind::TypeMismatch {
+                            expected: ret_type.clone(),
+                            found: ret.clone(),
+                        },
+                        body.span,
+                    ));
+                }
+            }
+            None => (),
+        }
     }
 
     Ok(TypedDecl {
@@ -847,7 +1018,7 @@ pub fn type_fn(ctx: &mut ScopedCtx, fn_def: Function, span: Span) -> TypeResult<
         kind: DeclKind::Function {
             name,
             arguments: args,
-            body: type_stmt(&mut body_ctx, body)?,
+            body,
             ret_type,
         },
         span,
@@ -859,17 +1030,21 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
     let decl = match decl.0 {
         Declaration::Procedures(ty, procs) => {
             let mut ty_procs = vec![];
-            for proc in procs {
-                ty_procs.push(type_fn(ctx, proc.0, proc.1)?);
+            for (mut proc_fn, span) in procs {
+                // kind of a hack, changing the method name to be a function that just exists with
+                // the name type::name
+                proc_fn.name = format!("{}::{}", ty, proc_fn.name);
+                let ty_fn = type_fn(ctx, proc_fn, span, Some(ty.clone()))?;
+                ty_procs.push(ty_fn);
             }
             TypedDecl {
                 ty: ty.clone(),
                 kind: DeclKind::Procedures(ty, ty_procs),
                 span: decl.1,
-                visible: false,
+                visible: true,
             }
         }
-        Declaration::Function(fn_def) => type_fn(ctx, fn_def, decl.1)?,
+        Declaration::Function(fn_def) => type_fn(ctx, fn_def, decl.1, None)?,
         Declaration::Enum { name, variants } => TypedDecl {
             ty: Type::Unit,
             kind: DeclKind::Enum {
@@ -973,8 +1148,35 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
                     body,
                     ret_type,
                 }) => (name, arguments, body, ret_type),
-                _ => continue,
+                _ => {
+                    continue;
+                }
             },
+            Declaration::Procedures(type_name, fns) => {
+                for fn_def in fns {
+                    let Function {
+                        name,
+                        arguments,
+                        body: _,
+                        ret_type,
+                    } = &fn_def.0;
+                    let mut param_types = vec![type_name.clone()];
+
+                    for (var, _) in arguments {
+                        param_types.push(var.ty.clone().unwrap());
+                    }
+
+                    let name = format!("{}::{}", type_name, name);
+                    let signature = FunctionSignature {
+                        param_types,
+                        ret_type: ret_type.clone().unwrap_or(Type::Unit),
+                    };
+
+                    println!("registered method fn {}: {}", name, signature);
+                    ctx.insert_user_def_type(name, Type::Fn(Box::new(signature)));
+                }
+                continue;
+            }
             _ => continue,
         };
 
@@ -995,6 +1197,15 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
     for decl in imports {
         if let Some(name) = decl.name() {
             ctx.insert_user_def_type(name.to_string(), decl.ty.clone());
+        }
+
+        if let DeclKind::Procedures(_, fns) = decl.kind {
+            for proc_type_decl in fns {
+                ctx.insert_user_def_type(
+                    proc_type_decl.name().unwrap().to_string(),
+                    proc_type_decl.ty.clone(),
+                );
+            }
         }
     }
 }

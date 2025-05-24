@@ -2,8 +2,6 @@ module main;
 
 use core:fmt;
 
-type Color = Red | Green | Blue int;
-
 type Test = {
     x: int
 }
@@ -22,13 +20,11 @@ fn main() {
 
     let t: Test = Test { x = 1 };
 
-    let c = Blue 1;
-
     {
         print("test");
     }
 
-    x = 1;
-    t.x = 2;
-    println(int_to_string(y));
+    // x = 1;
+    // t.x = 2;
+    print_int((y));
 }

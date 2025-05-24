@@ -8,10 +8,16 @@ pub use ast::{
     use_analysis,
 };
 pub use lex::tokenize;
-pub use mir::ssa::build_ssa;
+pub use mir::ssa::{Program, build_ssa};
 
-pub trait AstError {
-    fn span(&self) -> Option<ast::Span>;
+pub type Span = std::ops::Range<usize>;
+
+pub trait WijError {
+    fn span(&self) -> Option<Span>;
     fn reason(&self) -> String;
-    fn notes(&self) -> Vec<(String, ast::Span)>;
+    fn notes(&self) -> Vec<(String, Span)>;
+}
+
+pub trait Graphviz {
+    fn dot(&self) -> String;
 }

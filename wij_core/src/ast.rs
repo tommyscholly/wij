@@ -3,8 +3,10 @@ pub mod typed;
 mod types;
 pub mod use_analysis;
 
+use crate::Span;
+
 use crate::{
-    AstError,
+    WijError,
     lex::{Keyword, Token},
     match_optional_token,
 };
@@ -14,7 +16,6 @@ pub use types::Type;
 
 use std::{collections::VecDeque, fmt::Display};
 
-pub type Span = std::ops::Range<usize>;
 pub type Spanned<T> = (T, Span);
 
 #[allow(dead_code)]
@@ -78,7 +79,7 @@ impl ParseError {
     }
 }
 
-impl AstError for ParseError {
+impl WijError for ParseError {
     fn span(&self) -> Option<Span> {
         self.span.clone()
     }
@@ -424,6 +425,7 @@ pub enum Expression {
     RecordInit(String, Vec<(String, Spanned<Expression>)>),
     DataConstruction(String, Option<Box<Spanned<Expression>>>),
     Idx(Box<Spanned<Expression>>, Box<Spanned<Expression>>),
+    Self_,
 }
 
 fn parse_record_assignments(
@@ -499,6 +501,7 @@ impl Expression {
         use Literal::*;
 
         let mut expr = match parser.pop_next() {
+            Some((Token::Keyword(Keyword::Self_), span)) => (Expression::Self_, span),
             Some((Token::Int(i), span)) => (Expression::Literal(Int(i)), span),
             Some((Token::Keyword(Keyword::True), span)) => (Expression::Literal(Bool(true)), span),
             Some((Token::Keyword(Keyword::False), span)) => {

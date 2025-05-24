@@ -5,12 +5,19 @@ type StringData = {
     length: int
 }
 
+foreign {
+    // transmute: fn(src: 'a) -> 'b;
+    strbytes: fn(string: str) -> *[byte];
+}
+
 procs str {
     pub fn len() -> int {
-
+        // todo
+        return 5;
     }
 
     pub fn bytes() -> *[byte] {
-
+        // todo
+        return strbytes(self);
     }
 }

@@ -1,11 +1,15 @@
-use std::{path::PathBuf, process::exit};
+use std::{
+    fs,
+    path::PathBuf,
+    process::{Command, exit},
+};
 
 use ariadne::{ColorGenerator, Label, Report, ReportKind, Source};
 use clap::Parser as Clap;
 use rand::{Rng, rng};
 
 use wij_core::{
-    AstError, Module, Parser, ScopedCtx, build_ssa, tokenize, type_check, use_analysis,
+    Graphviz, Module, Parser, Program, WijError, build_ssa, tokenize, type_check, use_analysis,
 };
 
 #[derive(Clap)]
@@ -19,9 +23,11 @@ struct Options {
     parse: bool,
     #[clap(short, long)]
     tychk: bool,
+    #[clap(short, long)]
+    debug: bool,
 }
 
-fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl AstError) {
+fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl WijError) {
     let mut rand_state = [0u16; 3];
     rng().fill(&mut rand_state);
     let mut colors = ColorGenerator::from_state(rand_state, 0.5);
@@ -59,9 +65,9 @@ fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl AstErro
 
 // This is a special type alias, where the directly compiled file is always first
 // and any dependent modules are appended
-pub type ResultingModules<'a> = Vec<(Module, ScopedCtx<'a>)>;
+pub type ResultingModules = Vec<Module>;
 
-fn compile_file<'a>(file: &str, options: &Options) -> Option<ResultingModules<'a>> {
+fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
     let src = std::fs::read_to_string(file).unwrap();
     let src = src.trim();
     let tokens = tokenize(src)
@@ -105,10 +111,10 @@ fn compile_file<'a>(file: &str, options: &Options) -> Option<ResultingModules<'a
         let module_files = use_analysis::files_in_module(&module_file_path);
         match module_files {
             Ok(module_files) => {
-                let (module, ctx) = compile_module(module_name, module_files, options);
+                let module = compile_module(module_name, module_files, options);
                 imports.append(&mut module.exports.clone());
 
-                additional_modules.push((module, ctx));
+                additional_modules.push(module);
             }
             Err(e) => {
                 panic!("Error loading module {module_name}: {e}");
@@ -117,7 +123,7 @@ fn compile_file<'a>(file: &str, options: &Options) -> Option<ResultingModules<'a
     }
 
     let module = match type_check(prog, imports) {
-        Ok(p) => p,
+        Ok((module, _)) => module,
         Err(e) => {
             report_error(file, src, "Type Error", e);
             return None;
@@ -135,19 +141,13 @@ fn compile_file<'a>(file: &str, options: &Options) -> Option<ResultingModules<'a
     Some(resulting_modules)
 }
 
-fn compile_module<'a>(
-    module_name: String,
-    module_files: Vec<PathBuf>,
-    options: &Options,
-) -> (Module, ScopedCtx<'a>) {
+fn compile_module(module_name: String, module_files: Vec<PathBuf>, options: &Options) -> Module {
     let mut module = Module::new(module_name);
-    let mut dependent_modules = Vec::new();
     for file in module_files {
-        let mut file_mods = compile_file(file.to_str().unwrap(), options).unwrap();
-        let file_module = file_mods.swap_remove(0);
-        module.combine(file_module);
-        // file_mods becomes just the dependent modules after the first
-        dependent_modules.append(&mut file_mods);
+        let file_mods = compile_file(file.to_str().unwrap(), options).unwrap();
+        for file_mod in file_mods.into_iter() {
+            module.combine(file_mod);
+        }
     }
 
     module
@@ -156,7 +156,24 @@ fn compile_module<'a>(
 fn main() {
     let options = Options::parse();
 
-    if let Some(module) = compile_file(&options.file, &options) {
-        println!("{:#?}", module);
+    if let Some(modules) = compile_file(&options.file, &options) {
+        let ssa_mod: Program = build_ssa(modules);
+
+        if options.debug {
+            let dot_content = ssa_mod.dot();
+            let output_path = &ssa_mod.name;
+            fs::write(format!("{}.dot", output_path), dot_content)
+                .expect("Failed to write DOT file");
+
+            Command::new("dot")
+                .args([
+                    "-Tpng",
+                    &format!("{}.dot", output_path),
+                    "-o",
+                    &format!("{}.png", output_path),
+                ])
+                .output()
+                .expect("Failed to execute dot command");
+        }
     }
 }

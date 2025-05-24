@@ -1,3 +1,5 @@
+module main;
+
 fn main() {
     let test = 1;
 }

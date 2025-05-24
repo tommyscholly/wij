@@ -5,10 +5,16 @@ use core:strings;
 foreign {
     write: fn(fd: int, data: *[byte], count: int) -> int;
     read: fn(fd: int, data: *[byte], count: int) -> int;
+    // magic fn im just gonna define for now
+    write_int: fn(data: int);
 }
 
-pub fn int_to_string(x: int) -> str {
-    
+// pub fn int_to_string(x: int) -> str {
+// 
+// }
+
+pub fn print_int(x: int) {
+    write_int(x);
 }
 
 pub fn println(msg: str) {

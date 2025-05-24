@@ -2,9 +2,9 @@ mod macros;
 
 use std::iter::Peekable;
 
-use crate::AstError;
+use crate::Span;
+use crate::WijError;
 use crate::ast::BinOp;
-use crate::ast::Span;
 use crate::ast::Spanned;
 use crate::{advance_single_token, handle_operator};
 
@@ -29,7 +29,7 @@ impl LexError {
     }
 }
 
-impl AstError for LexError {
+impl WijError for LexError {
     fn span(&self) -> Option<Span> {
         Some(self.span.clone())
     }
@@ -42,7 +42,7 @@ impl AstError for LexError {
         }
     }
 
-    fn notes(&self) -> Vec<(String, crate::ast::Span)> {
+    fn notes(&self) -> Vec<(String, crate::Span)> {
         Vec::new()
     }
 }
@@ -78,7 +78,7 @@ pub enum Keyword {
 
     Procs,
     // Self is a kw
-    SelfThis,
+    Self_,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -108,7 +108,7 @@ impl TryFrom<&str> for Keyword {
             "break" => Ok(Keyword::Break),
             "continue" => Ok(Keyword::Continue),
             "procs" => Ok(Keyword::Procs),
-            "self" => Ok(Keyword::SelfThis),
+            "self" => Ok(Keyword::Self_),
             _ => Err(()),
         }
     }
@@ -134,6 +134,7 @@ pub enum Token {
     Arrow,
     Bar,
     Dot,
+    Tick,
 }
 
 impl TryFrom<&str> for BinOp {
@@ -177,6 +178,26 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
     fn next_token(&mut self) -> Result<Spanned<Token>, LexError> {
         while let Some(c) = self.chars.peek() {
             match c {
+                '/' => {
+                    if self.chars.peek() == Some(&'/') {
+                        while let Some(&c) = self.chars.peek() {
+                            if c == '\n' {
+                                self.chars.next();
+                                self.current += 1;
+                                self.start = self.current;
+                                break;
+                            } else {
+                                self.chars.next();
+                                self.current += 1;
+                            }
+                        }
+                    } else {
+                        advance_single_token!(self, Token::BinOp(BinOp::Div))
+                    }
+                }
+                '\'' => {
+                    advance_single_token!(self, Token::Tick)
+                }
                 ';' => {
                     advance_single_token!(self, Token::SemiColon)
                 }

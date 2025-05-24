@@ -1,1 +1,3 @@
-fn main() { if a { return 1; } else { return 2; }}
+module main;
+
+fn main() -> int { if true { return 1; } else { return 2; }}
