@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{BinOp, Literal, Type, typed::*};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MIRType {
+pub enum MIRType {
     Byte,
     Int,
     Bool,
@@ -43,11 +43,11 @@ fn convert_type(ty: &Type) -> MIRType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub(crate) struct ValueID(pub(crate) u32);
+pub struct ValueID(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub(crate) struct BlockID(pub(crate) u32);
+pub struct BlockID(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub(crate) struct FnID(pub(crate) u32);
+pub struct FnID(pub u32);
 
 #[derive(Debug, Clone)]
 struct Value {
@@ -57,7 +57,7 @@ struct Value {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Operation {
+pub enum Operation {
     IntConst(i32),
     BoolConst(bool),
     // unsure if i will actually be doing str constants
@@ -94,7 +94,7 @@ pub(crate) enum Operation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BinOpKind {
+pub enum BinOpKind {
     Add,
     Sub,
     Mul,
@@ -132,7 +132,7 @@ impl From<&BinOp> for BinOpKind {
 
 // terminator instruction for a basic block
 #[derive(Debug, Clone)]
-pub(crate) enum Terminator {
+pub enum Terminator {
     Return(Option<ValueID>),
     // goto, but called br in llvm naming style
     Branch(BlockID),
@@ -157,50 +157,49 @@ pub(crate) enum Terminator {
 }
 
 #[derive(Debug)]
-pub(crate) struct Block {
-    pub(crate) id: BlockID,
-    pub(crate) instructions: Vec<(ValueID, Operation)>,
-    pub(crate) terminator: Terminator,
+pub struct Block {
+    pub id: BlockID,
+    pub instructions: Vec<(ValueID, Operation)>,
+    pub terminator: Terminator,
     // unsure if i'm doing analysis, but if i am, this will be needed
     #[allow(unused)]
     pub(crate) predecessors: HashSet<BlockID>,
 }
 
 #[derive(Debug)]
-pub(crate) struct Function {
-    #[allow(unused)]
-    pub(crate) id: FnID,
-    pub(crate) name: String,
-    pub(crate) params: Vec<(String, MIRType)>,
-    #[allow(unused)]
-    pub(crate) return_type: Option<MIRType>,
+pub struct Function {
+    pub id: FnID,
+    pub name: String,
+    pub params: Vec<(String, MIRType)>,
 
-    pub(crate) entry_block: BlockID,
-    pub(crate) blocks: HashMap<BlockID, Block>,
+    pub return_type: Option<MIRType>,
+
+    pub entry_block: BlockID,
+    pub blocks: HashMap<BlockID, Block>,
 
     // unsure if i'm doing analysis, but dominator tree is needed for most cfg analysis
     #[allow(unused)]
     pub(crate) dominators: HashMap<BlockID, HashSet<BlockID>>,
 
     // map var names to value ids
-    pub(crate) symbols: HashMap<String, ValueID>,
+    pub symbols: HashMap<String, ValueID>,
 }
 
 #[derive(Debug, Default)]
 pub struct Program {
     pub name: String,
-    pub(crate) functions: HashMap<FnID, Function>,
+    pub functions: HashMap<FnID, Function>,
     // allows faster fn lookup, but more importantly, recursive functions
-    fns_by_name: HashMap<String, FnID>,
+    pub fns_by_name: HashMap<String, FnID>,
 
-    pub(crate) entry_function: Option<FnID>,
+    pub entry_function: Option<FnID>,
 
-    types: HashMap<String, MIRType>,
-    externals: HashMap<String, FunctionType>,
+    pub types: HashMap<String, MIRType>,
+    pub externals: HashMap<String, FunctionType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FunctionType {
+pub struct FunctionType {
     params: Vec<MIRType>,
     return_type: Option<MIRType>,
 }

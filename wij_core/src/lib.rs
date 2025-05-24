@@ -8,7 +8,7 @@ pub use ast::{
     use_analysis,
 };
 pub use lex::tokenize;
-pub use mir::ssa::{Program, build_ssa};
+pub use mir::ssa::{self, Program, build_ssa};
 
 pub type Span = std::ops::Range<usize>;
 

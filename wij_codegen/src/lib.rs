@@ -1,14 +1,23 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+mod cranelift;
+mod llvm;
+
+use wij_core::Program;
+
+pub enum Backend {
+    Cranelift,
+    Llvm,
+    Mlir,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct CodegenOptions {
+    backend: Backend,
+    program_name: String,
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+pub fn codegen(program: Program, options: CodegenOptions) {
+    match &options.backend {
+        Backend::Cranelift => cranelift::compile(program, &options.program_name),
+        Backend::Llvm => llvm::compile(),
+        Backend::Mlir => todo!(),
     }
 }
