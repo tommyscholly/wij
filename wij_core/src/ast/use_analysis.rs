@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Result;
 use std::path::PathBuf;
 
-use super::{Declaration, Path, Spanned};
+use super::{DeclKind, Declaration, Path, Spanned};
 
 pub fn resolve_file_from_path(file_path_base: &str, core_path: &str, mut path: Path) -> String {
     assert!(!path.is_empty());
@@ -37,8 +37,8 @@ pub fn extract_module_uses(decls: &Vec<Spanned<Declaration>>) -> Vec<Path> {
     let mut uses = vec![];
     for decl in decls {
         #[allow(clippy::single_match)]
-        match &decl.0 {
-            Declaration::Use(name) => {
+        match &decl.0.decl {
+            DeclKind::Use(name) => {
                 uses.push(name.clone());
             }
             _ => {}

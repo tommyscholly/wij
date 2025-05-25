@@ -135,6 +135,7 @@ pub enum Literal {
     Bool(bool),
 }
 
+#[allow(unused)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Pat {
     Literal(Literal),
@@ -759,7 +760,7 @@ impl Parseable for Function {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Declaration {
+pub enum DeclKind {
     Function(Function),
     Record {
         name: String,
@@ -772,8 +773,28 @@ pub enum Declaration {
     Module(String),
     ForeignDeclarations(Vec<Spanned<ForeignDeclaration>>),
     Use(Path),
-    Public(Box<Spanned<Declaration>>),
     Procedures(Type, Vec<Spanned<Function>>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+impl Visibility {
+    pub(crate) fn to_bool(&self) -> bool {
+        match self {
+            Visibility::Public => true,
+            Visibility::Private => false,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Declaration {
+    pub visibility: Visibility,
+    pub decl: DeclKind,
 }
 
 fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned<Var>>> {
@@ -815,7 +836,11 @@ impl Parseable for Declaration {
                 let (name, name_span) = parser.expect_ident()?;
                 let _ = parser.expect_next(Token::SemiColon)?;
                 let span = mod_span.start..name_span.end;
-                Ok((Declaration::Module(name), span))
+                let decl = Declaration {
+                    visibility: Visibility::Private,
+                    decl: DeclKind::Module(name),
+                };
+                Ok((decl, span))
             }
             Some((Token::Keyword(Keyword::Foreign), _)) => {
                 let _foreign_span = parser.expect_kw_kind(Keyword::Foreign)?;
@@ -831,7 +856,12 @@ impl Parseable for Declaration {
 
                 let _rbrace = parser.expect_next(Token::RBrace)?;
                 let span = _foreign_span.start.._rbrace.1.end;
-                Ok((Declaration::ForeignDeclarations(foreign_decls), span))
+
+                let decl = Declaration {
+                    visibility: Visibility::Private,
+                    decl: DeclKind::ForeignDeclarations(foreign_decls),
+                };
+                Ok((decl, span))
             }
             Some((Token::Keyword(Keyword::Use), use_span)) => {
                 let _use_span = parser.expect_kw_kind(Keyword::Use)?;
@@ -844,7 +874,12 @@ impl Parseable for Declaration {
                 }
                 let (_, semi_span) = parser.expect_next(Token::SemiColon)?;
                 let span = use_span.start..semi_span.end;
-                Ok((Declaration::Use(path), span))
+
+                let decl = Declaration {
+                    visibility: Visibility::Private,
+                    decl: DeclKind::Use(path),
+                };
+                Ok((decl, span))
             }
             Some((Token::Keyword(Keyword::Procs), _)) => {
                 let _start_span = parser.expect_kw_kind(Keyword::Procs)?;
@@ -865,19 +900,27 @@ impl Parseable for Declaration {
                 }
                 let _rbrace = parser.expect_next(Token::RBrace)?;
                 let span = ty_span.start.._rbrace.1.end;
-                Ok((Declaration::Procedures(ty, procs), span))
+
+                let decl = Declaration {
+                    visibility: Visibility::Private,
+                    decl: DeclKind::Procedures(ty, procs),
+                };
+                Ok((decl, span))
             }
             Some((Token::Keyword(Keyword::Fn), _)) => {
                 let (func, func_span) = Function::parse(parser)?;
-                Ok((Declaration::Function(func), func_span))
+                let decl = Declaration {
+                    visibility: Visibility::Private,
+                    decl: DeclKind::Function(func),
+                };
+                Ok((decl, func_span))
             }
             Some((Token::Keyword(Keyword::Pub), _)) => {
                 let pub_span = parser.expect_kw_kind(Keyword::Pub)?;
-                let (decl, decl_span) = Declaration::parse(parser)?;
-                match decl {
-                    Declaration::Function { .. }
-                    | Declaration::Record { .. }
-                    | Declaration::Enum { .. } => {}
+                let (mut decl, decl_span) = Declaration::parse(parser)?;
+                match decl.decl {
+                    DeclKind::Function { .. } | DeclKind::Record { .. } | DeclKind::Enum { .. } => {
+                    }
                     _ => {
                         return Err(ParseError::new(
                             ParseErrorKind::InvalidVisibility,
@@ -885,7 +928,9 @@ impl Parseable for Declaration {
                         ));
                     }
                 }
-                Ok((Declaration::Public(Box::new((decl, decl_span))), pub_span))
+                decl.visibility = Visibility::Public;
+
+                Ok((decl, pub_span))
             }
             Some((Token::Keyword(Keyword::Type), ty_span_start)) => {
                 let _start_span = parser.expect_kw_kind(Keyword::Type)?;
@@ -905,13 +950,14 @@ impl Parseable for Declaration {
                         parser.pop_next();
                         let fields = parse_args(parser, Token::RBrace)?;
                         let span = ty_span_start.start..fields.last().unwrap().1.end;
-                        Ok((
-                            Declaration::Record {
+                        let decl = Declaration {
+                            visibility: Visibility::Private,
+                            decl: DeclKind::Record {
                                 name: type_name,
                                 fields,
                             },
-                            span,
-                        ))
+                        };
+                        Ok((decl, span))
                     }
                     Some(_) => {
                         // Enum (probably)
@@ -980,13 +1026,14 @@ impl Parseable for Declaration {
                         }
 
                         let type_span = ty_span_start.start..variants.last().unwrap().1.end;
-                        Ok((
-                            Declaration::Enum {
+                        let decl = Declaration {
+                            visibility: Visibility::Private,
+                            decl: DeclKind::Enum {
                                 name: type_name,
                                 variants,
                             },
-                            type_span,
-                        ))
+                        };
+                        Ok((decl, type_span))
                     }
                     None => Err(ParseError::new(ParseErrorKind::EndOfInput, ty_span_start)),
                 }

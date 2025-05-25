@@ -9,6 +9,7 @@ use super::{
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Type {
     Int,
+    Usize,
     Bool,
     Str,
     Byte,
@@ -30,6 +31,7 @@ impl Display for Type {
         use Type::*;
         match self {
             Int => write!(f, "int"),
+            Usize => write!(f, "usize"),
             Bool => write!(f, "bool"),
             Str => write!(f, "str"),
             Generic(c) => write!(f, "'{}", c),
@@ -99,6 +101,7 @@ impl Parseable for Type {
                 let (kw, span) = parser.expect_kw()?;
                 match kw {
                     Keyword::Int => Ok((Type::Int, span)),
+                    Keyword::Usize => Ok((Type::Usize, span)),
                     Keyword::Bool => Ok((Type::Bool, span)),
                     Keyword::Str => Ok((Type::Str, span)),
                     Keyword::Byte => Ok((Type::Byte, span)),

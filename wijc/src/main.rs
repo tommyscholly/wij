@@ -12,6 +12,8 @@ use wij_core::{
     Graphviz, Module, Parser, Program, WijError, build_ssa, tokenize, type_check, use_analysis,
 };
 
+use wij_codegen::{Backend, CodegenOptions, codegen};
+
 #[derive(Clap)]
 struct Options {
     file: String,
@@ -175,5 +177,9 @@ fn main() {
                 .output()
                 .expect("Failed to execute dot command");
         }
+
+        let backend = Backend::Cranelift;
+        let options = CodegenOptions::new(ssa_mod.name.clone(), backend);
+        codegen(ssa_mod, options);
     }
 }

@@ -1,0 +1,12 @@
+module mem;
+
+foreign {
+    malloc: fn(size: usize) -> opaqueptr;
+    free: fn(ptr: opaqueptr);
+}
+
+pub fn alloc(comptime T: type) -> *T {
+    let allocation = malloc(@sizeOf(T);
+    return @ptrCast(*T, allocation);
+}
+

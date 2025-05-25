@@ -6,6 +6,7 @@ use crate::ast::{BinOp, Literal, Type, typed::*};
 pub enum MIRType {
     Byte,
     Int,
+    Usize,
     Bool,
     Str,
     Unit,
@@ -19,6 +20,7 @@ fn convert_type(ty: &Type) -> MIRType {
     match ty {
         Type::Byte => MIRType::Byte,
         Type::Int => MIRType::Int,
+        Type::Usize => MIRType::Usize,
         Type::Bool => MIRType::Bool,
         Type::Str => MIRType::Str,
         Type::Unit => MIRType::Unit,
@@ -195,13 +197,13 @@ pub struct Program {
     pub entry_function: Option<FnID>,
 
     pub types: HashMap<String, MIRType>,
-    pub externals: HashMap<String, FunctionType>,
+    pub externals: HashMap<String, (FnID, FunctionType)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
-    params: Vec<MIRType>,
-    return_type: Option<MIRType>,
+    pub params: Vec<MIRType>,
+    pub return_type: Option<MIRType>,
 }
 
 #[derive(Default, Debug)]
@@ -790,10 +792,13 @@ impl SSABuilder {
 
         program.externals.insert(
             name.to_string(),
-            FunctionType {
-                params: param_types,
-                return_type: Some(return_type),
-            },
+            (
+                external_fn_id,
+                FunctionType {
+                    params: param_types,
+                    return_type: Some(return_type),
+                },
+            ),
         );
 
         program.fns_by_name.insert(name.to_string(), external_fn_id);

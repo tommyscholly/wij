@@ -8,3 +8,4 @@ ariadne = "0.5.1"
 clap = { version = "4.5.37", features = ["derive"] }
 rand = "0.9.1"
 wij_core = { path = "../wij_core" }
+wij_codegen = { path = "../wij_codegen" }

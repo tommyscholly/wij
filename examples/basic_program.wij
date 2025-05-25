@@ -15,16 +15,16 @@ fn fib(n: int) -> int {
 }
 
 fn main() {
-    let x: int = 5;
+    let x: int = 9;
     let y: int = fib(x);
 
-    let t: Test = Test { x = 1 };
+    // let t: Test = Test { x = 1 };
 
-    {
-        print("test");
-    }
+    // {
+        // print("test");
+    // }
 
     // x = 1;
     // t.x = 2;
-    print_int((y));
+    print_int(y);
 }

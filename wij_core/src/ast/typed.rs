@@ -5,7 +5,10 @@ use crate::{
     ast::{self, Type},
 };
 
-use super::{BinOp, Declaration, Expression, Function, Literal, Span, Spanned, Statement, Var};
+use super::{
+    BinOp, DeclKind as ASTDeclKind, Declaration, Expression, Function, Literal, Span, Spanned,
+    Statement, Var,
+};
 
 #[derive(Debug)]
 pub enum TypeErrorKind {
@@ -1027,8 +1030,8 @@ pub fn type_fn(
 }
 
 pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<TypedDecl> {
-    let decl = match decl.0 {
-        Declaration::Procedures(ty, procs) => {
+    let decl = match decl.0.decl {
+        ASTDeclKind::Procedures(ty, procs) => {
             let mut ty_procs = vec![];
             for (mut proc_fn, span) in procs {
                 // kind of a hack, changing the method name to be a function that just exists with
@@ -1044,8 +1047,8 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                 visible: true,
             }
         }
-        Declaration::Function(fn_def) => type_fn(ctx, fn_def, decl.1, None)?,
-        Declaration::Enum { name, variants } => TypedDecl {
+        ASTDeclKind::Function(fn_def) => type_fn(ctx, fn_def, decl.1, None)?,
+        ASTDeclKind::Enum { name, variants } => TypedDecl {
             ty: Type::Unit,
             kind: DeclKind::Enum {
                 name,
@@ -1059,10 +1062,10 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                     .collect(),
             },
             span: decl.1,
-            visible: false,
+            visible: decl.0.visibility.to_bool(),
         },
 
-        Declaration::Record { name, fields } => {
+        ASTDeclKind::Record { name, fields } => {
             let fields: Vec<(String, Type)> = fields
                 .into_iter()
                 .map(|(var, _)| (var.name, var.ty.unwrap()))
@@ -1074,10 +1077,10 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                     .expect("record type should have been parsed"),
                 kind: DeclKind::Record { name, fields },
                 span: decl.1,
-                visible: false,
+                visible: decl.0.visibility.to_bool(),
             }
         }
-        Declaration::ForeignDeclarations(fds) => {
+        ASTDeclKind::ForeignDeclarations(fds) => {
             let mut ty_fds = vec![];
             for (fd, _) in fds {
                 let name = fd.name;
@@ -1090,16 +1093,11 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                 ty: Type::Unit,
                 kind: DeclKind::ForeignDeclarations(ty_fds),
                 span: decl.1,
-                visible: false,
+                visible: decl.0.visibility.to_bool(),
             }
         }
-        Declaration::Public(decl) => {
-            let mut ty_decl = type_decl(ctx, *decl)?;
-            ty_decl.visible = true;
-            ty_decl
-        }
-        Declaration::Use(_) => todo!(),
-        Declaration::Module(_) => unreachable!(),
+        ASTDeclKind::Use(_) => todo!(),
+        ASTDeclKind::Module(_) => unreachable!(),
     };
 
     Ok(decl)
@@ -1107,8 +1105,8 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
 
 fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: Vec<TypedDecl>) {
     for decl in decls {
-        match &decl.0 {
-            Declaration::Record { name, fields } => {
+        match &decl.0.decl {
+            ASTDeclKind::Record { name, fields } => {
                 let fields: Vec<(String, Type)> = fields
                     .iter()
                     .map(|(var, _)| (var.name.clone(), var.ty.clone().unwrap()))
@@ -1116,7 +1114,7 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
                 let type_ = Type::Record(fields);
                 ctx.insert_user_def_type(name.to_string(), type_);
             }
-            Declaration::Enum {
+            ASTDeclKind::Enum {
                 name: enum_name,
                 variants,
             } => {
@@ -1134,25 +1132,14 @@ fn register_types(ctx: &mut TyCtx, decls: &Vec<Spanned<Declaration>>, imports: V
     }
 
     for decl in decls {
-        let (name, arguments, _body, ret_type) = match &decl.0 {
-            Declaration::Function(Function {
+        let (name, arguments, _body, ret_type) = match &decl.0.decl {
+            ASTDeclKind::Function(Function {
                 name,
                 arguments,
                 body,
                 ret_type,
             }) => (name, arguments, body, ret_type),
-            Declaration::Public(decl) => match &decl.0 {
-                Declaration::Function(Function {
-                    name,
-                    arguments,
-                    body,
-                    ret_type,
-                }) => (name, arguments, body, ret_type),
-                _ => {
-                    continue;
-                }
-            },
-            Declaration::Procedures(type_name, fns) => {
+            ASTDeclKind::Procedures(type_name, fns) => {
                 for fn_def in fns {
                     let Function {
                         name,
@@ -1218,11 +1205,11 @@ fn extract_module(
     let mut filt_decls: Vec<Spanned<Declaration>> = vec![];
     let mut modules = vec![];
     for decl in decls {
-        match decl.0 {
-            Declaration::Module(name) => {
+        match decl.0.decl {
+            ASTDeclKind::Module(name) => {
                 modules.push((name, decl.1));
             }
-            Declaration::Use(_) => {}
+            ASTDeclKind::Use(_) => {}
             _ => {
                 filt_decls.push(decl);
             }

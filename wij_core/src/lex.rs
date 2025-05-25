@@ -72,13 +72,15 @@ pub enum Keyword {
     Continue,
 
     Int,
+    Usize,
     Str,
     Bool,
     Byte,
 
     Procs,
-    // Self is a kw
+
     Self_,
+    Comptime,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -88,6 +90,7 @@ impl TryFrom<&str> for Keyword {
         match value {
             "let" => Ok(Keyword::Let),
             "int" => Ok(Keyword::Int),
+            "usize" => Ok(Keyword::Usize),
             "fn" => Ok(Keyword::Fn),
             "type" => Ok(Keyword::Type),
             "if" => Ok(Keyword::If),
@@ -109,6 +112,7 @@ impl TryFrom<&str> for Keyword {
             "continue" => Ok(Keyword::Continue),
             "procs" => Ok(Keyword::Procs),
             "self" => Ok(Keyword::Self_),
+            "comptime" => Ok(Keyword::Comptime),
             _ => Err(()),
         }
     }
@@ -135,6 +139,7 @@ pub enum Token {
     Bar,
     Dot,
     Tick,
+    At,
 }
 
 impl TryFrom<&str> for BinOp {
@@ -194,6 +199,9 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                     } else {
                         advance_single_token!(self, Token::BinOp(BinOp::Div))
                     }
+                }
+                '@' => {
+                    advance_single_token!(self, Token::Tick)
                 }
                 '\'' => {
                     advance_single_token!(self, Token::Tick)

@@ -14,6 +14,15 @@ pub struct CodegenOptions {
     program_name: String,
 }
 
+impl CodegenOptions {
+    pub fn new(program_name: String, backend: Backend) -> Self {
+        Self {
+            backend,
+            program_name,
+        }
+    }
+}
+
 pub fn codegen(program: Program, options: CodegenOptions) {
     match &options.backend {
         Backend::Cranelift => cranelift::compile(program, &options.program_name),

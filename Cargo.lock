@@ -1063,6 +1063,7 @@ dependencies = [
 name = "wij_codegen"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cranelift",
  "cranelift-module",
  "cranelift-native",
@@ -1083,6 +1084,7 @@ dependencies = [
  "ariadne",
  "clap",
  "rand",
+ "wij_codegen",
  "wij_core",
 ]
 

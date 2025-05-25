@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused)]
 
 // This is unfinished
 // My current linking strategy is link every module separately AFTER codegen
