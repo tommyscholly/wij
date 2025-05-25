@@ -13,12 +13,15 @@ fn test_parse_fn() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "main".to_string(),
-            arguments: vec![],
-            body: (Statement::Block(vec![]), 10..11),
-            ret_type: None,
-        }),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: (Statement::Block(vec![]), 10..11),
+                ret_type: None,
+            }),
+        },
         0..11,
     )];
     assert_eq!(decls.len(), 1);
@@ -38,42 +41,45 @@ fn test_parse_fn_with_params_and_body() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "main".to_string(),
-            arguments: vec![
-                (
-                    Var {
-                        name: "a".to_string(),
-                        ty: Some(Type::Int),
-                    },
-                    8..14,
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "main".to_string(),
+                arguments: vec![
+                    (
+                        Var {
+                            name: "a".to_string(),
+                            ty: Some(Type::Int),
+                        },
+                        8..14,
+                    ),
+                    (
+                        Var {
+                            name: "b".to_string(),
+                            ty: Some(Type::Int),
+                        },
+                        16..22,
+                    ),
+                ],
+                body: (
+                    Statement::Block(vec![(
+                        Statement::Let {
+                            var: (
+                                Var {
+                                    name: "c".to_string(),
+                                    ty: Some(Type::Int),
+                                },
+                                42..48,
+                            ),
+                            value: Some((Expression::Literal(Int(1)), 51..52)),
+                        },
+                        42..52,
+                    )]),
+                    24..52,
                 ),
-                (
-                    Var {
-                        name: "b".to_string(),
-                        ty: Some(Type::Int),
-                    },
-                    16..22,
-                ),
-            ],
-            body: (
-                Statement::Block(vec![(
-                    Statement::Let {
-                        var: (
-                            Var {
-                                name: "c".to_string(),
-                                ty: Some(Type::Int),
-                            },
-                            42..48,
-                        ),
-                        value: Some((Expression::Literal(Int(1)), 51..52)),
-                    },
-                    42..52,
-                )]),
-                24..52,
-            ),
-            ret_type: None,
-        }),
+                ret_type: None,
+            }),
+        },
         0..52,
     )];
     assert_eq!(decls.len(), 1);
@@ -91,18 +97,21 @@ fn test_return_fn() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "main".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(
-                    Statement::Return(Some((Expression::Literal(Int(1)), 18..19))),
-                    11..19,
-                )]),
-                10..19,
-            ),
-            ret_type: None,
-        }),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(
+                        Statement::Return(Some((Expression::Literal(Int(1)), 18..19))),
+                        11..19,
+                    )]),
+                    10..19,
+                ),
+                ret_type: None,
+            }),
+        },
         0..19,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -121,34 +130,37 @@ fn test_if_else() {
         .collect::<Vec<Spanned<Declaration>>>();
 
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "main".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(
-                    Statement::If {
-                        condition: (Expression::Ident("a".to_string()), 15..16),
-                        then_block: Box::new((
-                            Statement::Block(vec![(
-                                Statement::Return(Some((Expression::Literal(Int(1)), 26..27))),
-                                19..27,
-                            )]),
-                            17..27,
-                        )),
-                        else_block: Some(Box::new((
-                            Statement::Block(vec![(
-                                Statement::Return(Some((Expression::Literal(Int(2)), 45..46))),
-                                38..46,
-                            )]),
-                            36..46,
-                        ))),
-                    },
-                    12..46,
-                )]),
-                10..46,
-            ),
-            ret_type: None,
-        }),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(
+                        Statement::If {
+                            condition: (Expression::Ident("a".to_string()), 15..16),
+                            then_block: Box::new((
+                                Statement::Block(vec![(
+                                    Statement::Return(Some((Expression::Literal(Int(1)), 26..27))),
+                                    19..27,
+                                )]),
+                                17..27,
+                            )),
+                            else_block: Some(Box::new((
+                                Statement::Block(vec![(
+                                    Statement::Return(Some((Expression::Literal(Int(2)), 45..46))),
+                                    38..46,
+                                )]),
+                                36..46,
+                            ))),
+                        },
+                        12..46,
+                    )]),
+                    10..46,
+                ),
+                ret_type: None,
+            }),
+        },
         0..46,
     )];
 
@@ -167,15 +179,18 @@ fn test_type_enum() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Enum {
-            name: "Test".to_string(),
-            variants: vec![(
-                EnumVariant {
-                    name: "Red".to_string(),
-                    data: None,
-                },
-                12..15,
-            )],
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Enum {
+                name: "Test".to_string(),
+                variants: vec![(
+                    EnumVariant {
+                        name: "Red".to_string(),
+                        data: None,
+                    },
+                    12..15,
+                )],
+            },
         },
         0..15,
     )];
@@ -195,24 +210,27 @@ fn test_type_record() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Record {
-            name: "Test".to_string(),
-            fields: vec![
-                (
-                    Var {
-                        name: "a".to_string(),
-                        ty: Some(Type::Int),
-                    },
-                    14..20,
-                ),
-                (
-                    Var {
-                        name: "b".to_string(),
-                        ty: Some(Type::Int),
-                    },
-                    22..28,
-                ),
-            ],
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Record {
+                name: "Test".to_string(),
+                fields: vec![
+                    (
+                        Var {
+                            name: "a".to_string(),
+                            ty: Some(Type::Int),
+                        },
+                        14..20,
+                    ),
+                    (
+                        Var {
+                            name: "b".to_string(),
+                            ty: Some(Type::Int),
+                        },
+                        22..28,
+                    ),
+                ],
+            },
         },
         0..28,
     )];
@@ -231,36 +249,39 @@ fn test_fn_call() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "main".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(
-                    Statement::Let {
-                        var: (
-                            Var {
-                                name: "a".to_string(),
-                                ty: Some(Type::Int),
-                            },
-                            16..22,
-                        ),
-                        value: Some((
-                            Expression::FnCall(
-                                "add".to_string(),
-                                vec![
-                                    (Expression::Literal(Int(1)), 29..30),
-                                    (Expression::Literal(Int(2)), 32..33),
-                                ],
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(
+                        Statement::Let {
+                            var: (
+                                Var {
+                                    name: "a".to_string(),
+                                    ty: Some(Type::Int),
+                                },
+                                16..22,
                             ),
-                            25..34,
-                        )),
-                    },
-                    16..34,
-                )]),
-                10..34,
-            ),
-            ret_type: None,
-        }),
+                            value: Some((
+                                Expression::FnCall(
+                                    "add".to_string(),
+                                    vec![
+                                        (Expression::Literal(Int(1)), 29..30),
+                                        (Expression::Literal(Int(2)), 32..33),
+                                    ],
+                                ),
+                                25..34,
+                            )),
+                        },
+                        16..34,
+                    )]),
+                    10..34,
+                ),
+                ret_type: None,
+            }),
+        },
         0..34,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -278,27 +299,30 @@ fn test_fn_call_as_stmt() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "main".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(
-                    Statement::Expression(Box::new((
-                        Expression::FnCall(
-                            "add".to_string(),
-                            vec![
-                                (Expression::Literal(Int(1)), 16..17),
-                                (Expression::Literal(Int(2)), 19..20),
-                            ],
-                        ),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(
+                        Statement::Expression(Box::new((
+                            Expression::FnCall(
+                                "add".to_string(),
+                                vec![
+                                    (Expression::Literal(Int(1)), 16..17),
+                                    (Expression::Literal(Int(2)), 19..20),
+                                ],
+                            ),
+                            12..21,
+                        ))),
                         12..21,
-                    ))),
-                    12..21,
-                )]),
-                10..21,
-            ),
-            ret_type: None,
-        }),
+                    )]),
+                    10..21,
+                ),
+                ret_type: None,
+            }),
+        },
         0..21,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -316,32 +340,35 @@ fn test_bin_op_precedence() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "main".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(
-                    Statement::Return(Some((
-                        Expression::BinOp(
-                            BinOp::Add,
-                            Box::new((Expression::Literal(Int(1)), 19..20)),
-                            Box::new((
-                                Expression::BinOp(
-                                    BinOp::Mul,
-                                    Box::new((Expression::Literal(Int(2)), 23..24)),
-                                    Box::new((Expression::Literal(Int(3)), 27..28)),
-                                ),
-                                23..28,
-                            )),
-                        ),
-                        19..28,
-                    ))),
-                    12..28,
-                )]),
-                10..28,
-            ),
-            ret_type: None,
-        }),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "main".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(
+                        Statement::Return(Some((
+                            Expression::BinOp(
+                                BinOp::Add,
+                                Box::new((Expression::Literal(Int(1)), 19..20)),
+                                Box::new((
+                                    Expression::BinOp(
+                                        BinOp::Mul,
+                                        Box::new((Expression::Literal(Int(2)), 23..24)),
+                                        Box::new((Expression::Literal(Int(3)), 27..28)),
+                                    ),
+                                    23..28,
+                                )),
+                            ),
+                            19..28,
+                        ))),
+                        12..28,
+                    )]),
+                    10..28,
+                ),
+                ret_type: None,
+            }),
+        },
         0..28,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -387,18 +414,21 @@ fn test_bool_fn() {
         .map(Result::unwrap)
         .collect::<Vec<Spanned<Declaration>>>();
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "test".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(
-                    Statement::Return(Some((Expression::Literal(Bool(true)), 27..31))),
-                    20..31,
-                )]),
-                18..31,
-            ),
-            ret_type: Some(Type::Bool),
-        }),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "test".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(
+                        Statement::Return(Some((Expression::Literal(Bool(true)), 27..31))),
+                        20..31,
+                    )]),
+                    18..31,
+                ),
+                ret_type: Some(Type::Bool),
+            }),
+        },
         0..31,
     )];
     assert_eq!(decls.len(), expected.len());
@@ -423,15 +453,18 @@ fn test_field_access() {
     );
 
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "get_age".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(Statement::Return(Some(field_access)), 22..39)]),
-                20..39,
-            ),
-            ret_type: Some(Type::Int),
-        }),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "get_age".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(Statement::Return(Some(field_access)), 22..39)]),
+                    20..39,
+                ),
+                ret_type: Some(Type::Int),
+            }),
+        },
         0..39,
     )];
 
@@ -461,15 +494,18 @@ fn test_chained_field_access() {
     );
 
     let expected = vec![(
-        Declaration::Function(Function {
-            name: "get_city".to_string(),
-            arguments: vec![],
-            body: (
-                Statement::Block(vec![(Statement::Return(Some(city_access)), 23..47)]),
-                21..47,
-            ),
-            ret_type: Some(Type::Str),
-        }),
+        Declaration {
+            visibility: Visibility::Private,
+            decl: DeclKind::Function(Function {
+                name: "get_city".to_string(),
+                arguments: vec![],
+                body: (
+                    Statement::Block(vec![(Statement::Return(Some(city_access)), 23..47)]),
+                    21..47,
+                ),
+                ret_type: Some(Type::Str),
+            }),
+        },
         0..47,
     )];
 

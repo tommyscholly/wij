@@ -162,6 +162,7 @@ pub enum Statement {
         then_block: Box<Spanned<Statement>>,
         else_block: Option<Box<Spanned<Statement>>>,
     },
+    #[allow(unused)]
     Match {
         value: Spanned<Expression>,
         cases: Vec<Spanned<MatchCase>>,
