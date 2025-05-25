@@ -1,4 +1,5 @@
 mod ast;
+mod comptime;
 mod lex;
 mod mir;
 

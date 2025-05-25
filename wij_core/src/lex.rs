@@ -51,6 +51,7 @@ pub type LexResult<T> = Result<T, LexError>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Keyword {
+    Const,
     Let,
     Fn,
     Type,
@@ -88,6 +89,7 @@ impl TryFrom<&str> for Keyword {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
+            "const" => Ok(Keyword::Const),
             "let" => Ok(Keyword::Let),
             "int" => Ok(Keyword::Int),
             "usize" => Ok(Keyword::Usize),

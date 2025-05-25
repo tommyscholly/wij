@@ -1047,7 +1047,11 @@ pub fn type_decl(ctx: &mut ScopedCtx, decl: Spanned<Declaration>) -> TypeResult<
                 visible: true,
             }
         }
-        ASTDeclKind::Function(fn_def) => type_fn(ctx, fn_def, decl.1, None)?,
+        ASTDeclKind::Function(fn_def) => {
+            let mut fn_decl = type_fn(ctx, fn_def, decl.1, None)?;
+            fn_decl.visible = decl.0.visibility.to_bool();
+            fn_decl
+        }
         ASTDeclKind::Enum { name, variants } => TypedDecl {
             ty: Type::Unit,
             kind: DeclKind::Enum {
