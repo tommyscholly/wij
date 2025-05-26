@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 
 use cranelift::codegen;
+use cranelift::codegen::ir::immediates::Offset32;
+use cranelift::codegen::ir::stackslot::StackSize;
 use cranelift::frontend;
 
 use codegen::entity::EntityRef;
@@ -15,6 +17,9 @@ use codegen::settings::{self, Flags};
 use codegen::verifier::verify_function;
 use cranelift::prelude::Block;
 use cranelift::prelude::IntCC;
+use cranelift::prelude::MemFlags;
+use cranelift::prelude::StackSlotData;
+use cranelift::prelude::StackSlotKind;
 use cranelift::prelude::Value;
 use cranelift_module::FuncId;
 use cranelift_module::Linkage;
@@ -22,6 +27,7 @@ use cranelift_module::{Module, default_libcall_names};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 
+use wij_core::SizeOf;
 use wij_core::ssa::BinOpKind;
 use wij_core::ssa::BlockID;
 use wij_core::ssa::FnID;
@@ -101,6 +107,14 @@ impl CraneliftProgram {
         let object = self.module.finish();
         let object_file = format!("{}.o", self.program_name);
         std::fs::write(&object_file, object.emit()?)?;
+
+        std::process::Command::new("cc")
+            .arg("../wij_intrinsics/intrinsics.c")
+            .arg(&object_file)
+            .arg("-o")
+            .arg(self.program_name)
+            .output()?;
+
         Ok(())
     }
 
@@ -209,7 +223,7 @@ impl<'ctx> FunctionTranslator<'ctx> {
 
         for (idx, (param_name, ty)) in self.func.params.iter().enumerate() {
             // need to get the param_id because all references to the param is the id
-            let param_id = self.func.symbols.get(param_name).unwrap().0;
+            let param_id = self.func.symbols.get(param_name).unwrap().id.0;
             let param_var = self
                 .pctx
                 .declare_variable(param_id, &mut self.builder, ty.to_type());
@@ -275,6 +289,87 @@ impl<'ctx> FunctionTranslator<'ctx> {
                         .declare_variable(val_id, &mut self.builder, *var_ty);
                     self.builder.def_var(var, call_result);
                 }
+            }
+            Alloca(ty) => match ty {
+                MIRType::Record(fields) => {
+                    let size = fields
+                        .iter()
+                        .map(|(_, ty)| ty.size_of() as StackSize)
+                        .sum::<StackSize>();
+
+                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, size, 16); // TODO:
+                    // understand align_shift more
+                    let record_slot = self.builder.create_sized_stack_slot(data);
+
+                    let ty = MIRType::Ptr.to_type();
+                    let addr = self.builder.ins().stack_addr(ty, record_slot, 0);
+                    let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
+                    self.builder.def_var(var, addr);
+                }
+                MIRType::Array(_elem_ty) => {
+                    todo!()
+                }
+                _ => {
+                    todo!()
+                }
+            },
+            InsertValue(base, value, idx) => {
+                let base_var = self.pctx.get_variable(base.0);
+                let value_var = self.pctx.get_variable(value.0);
+                let base_val = self.builder.use_var(base_var);
+                let value_val = self.builder.use_var(value_var);
+                let offset = Offset32::new(idx as i32);
+                let _field_val =
+                    self.builder
+                        .ins()
+                        .store(MemFlags::new(), value_val, base_val, offset);
+            }
+            ExtractValue(base, idx, field_type) => {
+                let base_var = self.pctx.get_variable(base.0);
+                let base_val = self.builder.use_var(base_var);
+                let offset = Offset32::new(idx as i32);
+                let field_val = self.builder.ins().load(
+                    field_type.to_type(),
+                    MemFlags::new(),
+                    base_val,
+                    offset,
+                );
+                let var =
+                    self.pctx
+                        .declare_variable(val_id, &mut self.builder, field_type.to_type());
+                self.builder.def_var(var, field_val);
+            }
+            Store(lhs, rhs) => {
+                let lhs_var = self.pctx.get_variable(lhs.0);
+                let rhs_var = self.pctx.get_variable(rhs.0);
+                let lhs_val = self.builder.use_var(lhs_var);
+                let rhs_val = self.builder.use_var(rhs_var);
+                let _store_val = self
+                    .builder
+                    .ins()
+                    .store(MemFlags::new(), rhs_val, lhs_val, 0);
+            }
+            Load(ptr, ty) => {
+                let ptr_var = self.pctx.get_variable(ptr.0);
+                let ptr_val = self.builder.use_var(ptr_var);
+                let ty = ty.to_type();
+                let field_val = self.builder.ins().load(ty, MemFlags::new(), ptr_val, 0);
+                let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
+                self.builder.def_var(var, field_val);
+            }
+            GetElementPtr(base, indices) => {
+                let base_var = self.pctx.get_variable(base.0);
+                let base_val = self.builder.use_var(base_var);
+                let mut ptr = base_val;
+                for idx in indices {
+                    let idx_val = self.builder.ins().iconst(I64, idx as i64);
+                    ptr = self.builder.ins().iadd(ptr, idx_val);
+                }
+
+                let ty = MIRType::Ptr.to_type();
+                // let field_val = self.builder.ins().load(ty, MemFlags::new(), ptr, 0);
+                let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
+                self.builder.def_var(var, ptr);
             }
             BinOp { op, lhs, rhs } => {
                 let lhs_var = self.pctx.get_variable(lhs.0);

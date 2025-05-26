@@ -6,12 +6,15 @@ use core:fmt;
 type Record = {
     a: int,
     b: int,
-    c: int,
-    d: int,
 }
 
 fn main() -> int {
+    let y = Record { a = 55, b = 200 };
+    print_int(1);
+    y.a = 3;
+    print_int(2);
     let x: *Record = alloc(Record);
+    print_int(y.a);
 
     return 0;
 }

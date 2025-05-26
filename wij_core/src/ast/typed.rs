@@ -551,9 +551,7 @@ fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>, inferred_ty: Type) -> TypeRe
         }
         (Some(ty), ity) => {
             let ty = ctx.resolve_type(ty.clone());
-            println!("ty: {}, ity: {}", ty, ity);
             let ity = ctx.resolve_type(ity);
-            println!("ty: {}, ity: {}", ty, ity);
 
             if ty != ity {
                 return Err(TypeError::new(

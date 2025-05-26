@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinOp, Literal, Type, typed::*};
+use crate::{
+    SizeOf,
+    ast::{BinOp, Literal, Type, typed::*},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MIRType {
@@ -14,6 +17,25 @@ pub enum MIRType {
     Record(Vec<(String, MIRType)>),
     Fn(Vec<MIRType>, Box<MIRType>),
     Ptr,
+}
+
+impl SizeOf for MIRType {
+    fn size_of(&self) -> usize {
+        match self {
+            MIRType::Byte => 1,
+            MIRType::Int => 4,
+            MIRType::Bool => 1,
+            MIRType::Unit => 0,
+            MIRType::Array(elem_ty) => elem_ty.size_of(),
+            MIRType::Record(fields) => fields.iter().map(|(_, ty)| ty.size_of()).sum(),
+            MIRType::Fn(args, ret_ty) => {
+                args.iter().map(|ty| ty.size_of()).sum::<usize>() + ret_ty.size_of()
+            }
+            MIRType::Str => 0,
+            MIRType::Ptr => 8,
+            MIRType::Usize => 8,
+        }
+    }
 }
 
 fn convert_type(ty: &Type) -> MIRType {
@@ -52,11 +74,10 @@ pub struct BlockID(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct FnID(pub u32);
 
-#[derive(Debug, Clone)]
-struct Value {
-    id: ValueID,
-    #[allow(unused)]
-    ty: MIRType,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Value {
+    pub id: ValueID,
+    pub ty: MIRType,
 }
 
 #[derive(Debug, Clone)]
@@ -71,13 +92,13 @@ pub enum Operation {
     Parameter(usize), // parameter idx
 
     Alloca(MIRType),         // stack allocation
-    Load(ValueID),           // (address)
+    Load(ValueID, MIRType),  // (address)
     Store(ValueID, ValueID), // (address, value)
 
     // array/record operations, very similar to LLVM
-    GetElementPtr(ValueID, Vec<ValueID>), // base + indices
+    GetElementPtr(ValueID, Vec<i32>), // base + indices
     #[allow(unused)]
-    ExtractValue(ValueID, usize), // for records
+    ExtractValue(ValueID, usize, MIRType), // for records
     #[allow(unused)]
     InsertValue(ValueID, ValueID, usize), // for records (base, new_value, field_idx)
 
@@ -186,7 +207,7 @@ pub struct Function {
     pub(crate) dominators: HashMap<BlockID, HashSet<BlockID>>,
 
     // map var names to value ids
-    pub symbols: HashMap<String, ValueID>,
+    pub symbols: HashMap<String, Value>,
 }
 
 #[derive(Debug, Default)]
@@ -217,7 +238,7 @@ struct SSABuilder {
     current_function: Option<FnID>,
     current_block: Option<BlockID>,
 
-    var_defs: HashMap<String, ValueID>,
+    var_defs: HashMap<String, Value>,
 
     #[allow(unused)]
     incomplete_phis: Vec<(ValueID, String)>,
@@ -332,8 +353,8 @@ impl SSABuilder {
                 .instructions
                 .push((param_value.id, Operation::Parameter(idx)));
 
-            self.var_defs.insert(arg.id.clone(), param_value.id);
-            function.symbols.insert(arg.id.clone(), param_value.id);
+            function.symbols.insert(arg.id.clone(), param_value.clone());
+            self.var_defs.insert(arg.id.clone(), param_value);
         }
 
         program.fns_by_name.insert(name.to_string(), fn_id);
@@ -388,22 +409,22 @@ impl SSABuilder {
         match &stmt.kind {
             StatementKind::Let { var, value } => {
                 if let Some(expr) = value {
-                    let value_id = self.lower_expression(program, function, expr);
+                    let value = self.lower_expression(program, function, expr);
 
-                    self.var_defs.insert(var.id.clone(), value_id);
-                    function.symbols.insert(var.id.clone(), value_id);
+                    function.symbols.insert(var.id.clone(), value.clone());
+                    self.var_defs.insert(var.id.clone(), value);
                 } else {
                     // todo: if there is no initializer, should be allocating memory?
                     // i suppose in a gc'd language that is fine? since we don't care about
                     // optimial memory allocation
-                    let alloc_id = self.add_instruction_to_current_block(
+                    let alloc_value = self.add_instruction_to_current_block(
                         function,
                         Operation::Alloca(convert_type(&var.ty)),
                         MIRType::Ptr,
                     );
 
-                    self.var_defs.insert(var.id.clone(), alloc_id);
-                    function.symbols.insert(var.id.clone(), alloc_id);
+                    self.var_defs.insert(var.id.clone(), alloc_value.clone());
+                    function.symbols.insert(var.id.clone(), alloc_value);
                 }
             }
 
@@ -414,13 +435,13 @@ impl SSABuilder {
             }
 
             StatementKind::Return(expr_opt) => {
-                let value_id = expr_opt
+                let value = expr_opt
                     .as_ref()
                     .map(|expr| self.lower_expression(program, function, expr));
 
                 if let Some(block_id) = self.current_block {
                     if let Some(block) = function.blocks.get_mut(&block_id) {
-                        block.terminator = Terminator::Return(value_id);
+                        block.terminator = Terminator::Return(value.map(|v| v.id));
                     }
                 }
 
@@ -441,7 +462,7 @@ impl SSABuilder {
                 let current_block_id = self.current_block.unwrap();
                 if let Some(block) = function.blocks.get_mut(&current_block_id) {
                     block.terminator = Terminator::CondBranch {
-                        condition: cond_value,
+                        condition: cond_value.id,
                         true_block: then_block_id,
                         false_block: else_block_id,
                     };
@@ -516,35 +537,47 @@ impl SSABuilder {
                         MIRType::Int // placeholder 
                     };
 
-                    let phi_value_id = self.new_value(var_type.clone()).id;
+                    let phi_value = self.new_value(var_type.clone());
 
                     if let Some(block) = function.blocks.get_mut(&merge_block_id) {
                         let incoming = vec![
                             (
                                 then_block_id,
-                                *then_vars
+                                then_vars
                                     .get(&var)
-                                    .unwrap_or(&ValueID(self.next_value_id - 1)),
+                                    .map(|v| v.id)
+                                    .unwrap_or(ValueID(self.next_value_id - 1)),
                             ),
                             (
                                 else_block_id,
-                                *else_vars
+                                else_vars
                                     .get(&var)
-                                    .unwrap_or(&ValueID(self.next_value_id - 1)),
+                                    .map(|v| v.id)
+                                    .unwrap_or(ValueID(self.next_value_id - 1)),
                             ),
                         ];
 
                         block
                             .instructions
-                            .push((phi_value_id, Operation::Phi { incoming }));
+                            .push((phi_value.id, Operation::Phi { incoming }));
                     }
 
-                    self.var_defs.insert(var.clone(), phi_value_id);
+                    self.var_defs.insert(var.clone(), phi_value);
                 }
             }
 
             StatementKind::Expression(expr) => {
                 self.lower_expression(program, function, expr);
+            }
+            StatementKind::Assignment(lhs, rhs) => {
+                let lhs_value = self.lower_expression(program, function, lhs);
+                let rhs_value = self.lower_expression(program, function, rhs);
+
+                self.add_instruction_to_current_block(
+                    function,
+                    Operation::Store(lhs_value.id, rhs_value.id),
+                    MIRType::Unit,
+                );
             }
             _ => {
                 println!("need to handle stmt: {:?}", stmt);
@@ -558,7 +591,7 @@ impl SSABuilder {
         program: &Program,
         function: &mut Function,
         expr: &TypedExpression,
-    ) -> ValueID {
+    ) -> Value {
         match &expr.kind {
             ExpressionKind::Literal(lit) => match lit {
                 Literal::Int(val) => self.add_instruction_to_current_block(
@@ -583,9 +616,13 @@ impl SSABuilder {
                 ),
             },
 
-            ExpressionKind::Ident(name) => *self.var_defs.get(name).unwrap_or_else(|| {
-                panic!("Undefined variable: {}", name);
-            }),
+            ExpressionKind::Ident(name) => self
+                .var_defs
+                .get(name)
+                .unwrap_or_else(|| {
+                    panic!("Undefined variable: {}", name);
+                })
+                .clone(),
 
             ExpressionKind::BinOp(op, lhs, rhs) => {
                 let lhs_value = self.lower_expression(program, function, lhs);
@@ -597,8 +634,8 @@ impl SSABuilder {
                     function,
                     Operation::BinOp {
                         op: op_kind,
-                        lhs: lhs_value,
-                        rhs: rhs_value,
+                        lhs: lhs_value.id,
+                        rhs: rhs_value.id,
                     },
                     convert_type(&expr.ty),
                 )
@@ -607,7 +644,19 @@ impl SSABuilder {
             ExpressionKind::FnCall(func_name, args) => {
                 let arg_values = args
                     .iter()
-                    .map(|arg| self.lower_expression(program, function, arg))
+                    .map(|arg| {
+                        let value = self.lower_expression(program, function, arg);
+                        if let MIRType::Ptr = &value.ty {
+                            self.add_instruction_to_current_block(
+                                function,
+                                Operation::Load(value.id, convert_type(&arg.ty)),
+                                convert_type(&arg.ty),
+                            )
+                            .id
+                        } else {
+                            value.id
+                        }
+                    })
                     .collect();
 
                 let fn_id = program
@@ -647,21 +696,21 @@ impl SSABuilder {
                 for (i, elem) in elements.iter().enumerate() {
                     let elem_value = self.lower_expression(program, function, elem);
 
-                    let idx_value = self.add_instruction_to_current_block(
-                        function,
-                        Operation::IntConst(i as i32),
-                        MIRType::Int,
-                    );
+                    // let idx_value = self.add_instruction_to_current_block(
+                    //     function,
+                    //     Operation::IntConst(i as i32),
+                    //     MIRType::Int,
+                    // );
 
                     let elem_ptr = self.add_instruction_to_current_block(
                         function,
-                        Operation::GetElementPtr(array_ptr, vec![idx_value]),
+                        Operation::GetElementPtr(array_ptr.id, vec![i as i32]),
                         MIRType::Ptr,
                     );
 
                     self.add_instruction_to_current_block(
                         function,
-                        Operation::Store(elem_ptr, elem_value),
+                        Operation::Store(elem_ptr.id, elem_value.id),
                         MIRType::Unit,
                     );
                 }
@@ -671,57 +720,83 @@ impl SSABuilder {
 
             ExpressionKind::Idx(array, index) => {
                 let array_value = self.lower_expression(program, function, array);
-                let index_value = self.lower_expression(program, function, index);
+                // let index_value = self.lower_expression(program, function, index);
+                todo!();
+                let index_value = 0;
 
                 let elem_ptr = self.add_instruction_to_current_block(
                     function,
-                    Operation::GetElementPtr(array_value, vec![index_value]),
+                    Operation::GetElementPtr(array_value.id, vec![index_value]),
                     MIRType::Ptr,
                 );
 
                 self.add_instruction_to_current_block(
                     function,
-                    Operation::Load(elem_ptr),
+                    Operation::Load(elem_ptr.id, convert_type(&expr.ty)),
                     convert_type(&expr.ty),
                 )
             }
 
             ExpressionKind::FieldAccess(record, field_name) => {
                 let record_value = self.lower_expression(program, function, record);
-                let Type::UserDef(record_name) = &expr.ty else {
-                    // this should be unreachable due to type checking
-                    unreachable!();
+                // let Type::UserDef(record_name) = &record.ty else {
+                //     // this should be unreachable due to type checking
+                //     println!("record: {:?} expr: {:?}", record, expr);
+                //     unreachable!();
+                // };
+
+                let field_idx = match &record.ty {
+                    Type::Record(fields) => fields
+                        .iter()
+                        .position(|(name, _)| name == field_name)
+                        .unwrap() as i32,
+                    _ => {
+                        println!("record: {:?} expr: {:?}", record, expr);
+                        unreachable!();
+                    }
+                };
+                let field_type = match &record.ty {
+                    Type::Record(fields) => {
+                        &fields
+                            .iter()
+                            .find(|(name, _)| name == field_name)
+                            .unwrap()
+                            .1
+                    }
+                    _ => {
+                        unreachable!();
+                    }
                 };
 
-                let field_idx = self
-                    .record_field_idx(program, record_name, field_name)
-                    .unwrap() as i32;
+                // let field_idx = self
+                //     .record_field_idx(program, record_name, field_name)
+                //     .unwrap() as i32;
 
                 // deref the ptr
-                let idx_zero = self.add_instruction_to_current_block(
-                    function,
-                    Operation::IntConst(0),
-                    MIRType::Int,
-                );
+                // let idx_zero = self.add_instruction_to_current_block(
+                //     function,
+                //     Operation::IntConst(0),
+                //     MIRType::Int,
+                // );
 
                 // get field idx
-                let idx_one = self.add_instruction_to_current_block(
-                    function,
-                    Operation::IntConst(field_idx),
-                    MIRType::Int,
-                );
-
-                let field_ptr = self.add_instruction_to_current_block(
-                    function,
-                    Operation::GetElementPtr(record_value, vec![idx_zero, idx_one]),
-                    MIRType::Ptr,
-                );
+                // let field_val = self.add_instruction_to_current_block(
+                //     function,
+                //     Operation::IntConst(field_idx),
+                //     MIRType::Int,
+                // );
 
                 self.add_instruction_to_current_block(
                     function,
-                    Operation::Load(field_ptr),
-                    convert_type(&expr.ty),
+                    Operation::GetElementPtr(record_value.id, vec![field_idx as i32]),
+                    MIRType::Ptr,
                 )
+
+                // self.add_instruction_to_current_block(
+                //     function,
+                //     Operation::Load(field_ptr),
+                //     convert_type(&expr.ty),
+                // )
             }
             ExpressionKind::RecordInit(record_type, assignments) => {
                 let record_mir_ty = program
@@ -743,7 +818,8 @@ impl SSABuilder {
                             panic!("field {} not found in record {}", field_name, record_type)
                         });
 
-                    let insert_val = Operation::InsertValue(record_ptr, field_value, field_idx);
+                    let insert_val =
+                        Operation::InsertValue(record_ptr.id, field_value.id, field_idx);
 
                     self.add_instruction_to_current_block(function, insert_val, MIRType::Unit);
                 }
@@ -755,7 +831,7 @@ impl SSABuilder {
                     panic!("self not found in function {}", function.name);
                 });
 
-                *self_ptr
+                self_ptr.clone()
             }
             e => {
                 println!("need to handle expr: {:#?}", e);
@@ -770,8 +846,9 @@ impl SSABuilder {
         function: &mut Function,
         operation: Operation,
         ty: MIRType,
-    ) -> ValueID {
-        let value_id = self.new_value(ty).id;
+    ) -> Value {
+        let value = self.new_value(ty);
+        let value_id = value.id;
 
         if let Some(block_id) = self.current_block {
             if let Some(block) = function.blocks.get_mut(&block_id) {
@@ -787,7 +864,7 @@ impl SSABuilder {
             }
         }
 
-        value_id
+        value
     }
 
     fn register_external(&mut self, program: &mut Program, name: &str, sig: &FunctionSignature) {
@@ -869,7 +946,7 @@ impl SSABuilder {
 
 pub fn build_ssa(mut modules: Vec<Module>) -> Program {
     let mut program = Program {
-        name: "todo".to_string(),
+        name: "main".to_string(),
         functions: HashMap::new(),
         fns_by_name: HashMap::new(),
         entry_function: None,

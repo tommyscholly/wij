@@ -136,14 +136,14 @@ impl Function {
                     let type_str = format!("{:?}", ty);
                     write!(label, "alloca {}", escape_for_dot(&type_str)).unwrap();
                 }
-                Operation::Load(addr) => write!(label, "load %{}", addr.0).unwrap(),
+                Operation::Load(addr, _) => write!(label, "load %{}", addr.0).unwrap(),
                 Operation::Store(addr, val) => {
                     write!(label, "store %{}, %{}", val.0, addr.0).unwrap()
                 }
                 Operation::GetElementPtr(base, indices) => {
                     write!(label, "getelementptr(%{}", base.0).unwrap();
                     for idx in indices {
-                        write!(label, ", %{}", idx.0).unwrap();
+                        write!(label, ", %{}", idx).unwrap();
                     }
                     write!(label, ")").unwrap();
                 }
