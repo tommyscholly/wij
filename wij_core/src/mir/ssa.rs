@@ -40,7 +40,8 @@ fn convert_type(ty: &Type) -> MIRType {
             todo!()
         }
         Type::Ptr(_) => MIRType::Ptr,
-        _ => MIRType::Unit, // todo: handle other types
+        Type::OpaquePtr => MIRType::Ptr,
+        _ => todo!(), // todo: handle other types
     }
 }
 

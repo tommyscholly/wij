@@ -1,7 +1,15 @@
 module main;
 
 use core:mem;
+use core:fmt;
 
-fn main() {
-    let x: *int = alloc(int);
+type Record = {
+    a: int,
+    b: int
+}
+
+fn main() -> int {
+    let x: *int = alloc(Record);
+
+    return 0;
 }
