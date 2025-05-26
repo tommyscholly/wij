@@ -244,14 +244,20 @@ impl<'ctx> FunctionTranslator<'ctx> {
         use SSAOperation::*;
         match oper {
             IntConst(i) => {
-                let ty = I32;
+                let ty = MIRType::Int.to_type();
                 let const_val = self.builder.ins().iconst(ty, i as i64);
+                let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
+                self.builder.def_var(var, const_val);
+            }
+            UsizeConst(u) => {
+                let ty = MIRType::Usize.to_type();
+                let const_val = self.builder.ins().iconst(ty, u as i64);
                 let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
                 self.builder.def_var(var, const_val);
             }
             BoolConst(b) => {
                 let val = if b { 1 } else { 0 };
-                let ty = I8;
+                let ty = MIRType::Bool.to_type();
                 let const_val = self.builder.ins().iconst(ty, val);
                 let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
                 self.builder.def_var(var, const_val);

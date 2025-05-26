@@ -244,7 +244,6 @@ impl SSABuilder {
                             arguments,
                             body,
                             ret_type,
-                            is_comptime: _,
                         } = &fn_decl.kind
                         else {
                             panic!("help")
@@ -259,7 +258,6 @@ impl SSABuilder {
                     arguments,
                     body,
                     ret_type,
-                    is_comptime: _,
                 } => {
                     println!("lowering fn: {}", name);
                     let fn_id =

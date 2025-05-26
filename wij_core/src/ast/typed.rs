@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, VecDeque},
     fmt::Display,
     mem,
 };
@@ -158,18 +158,6 @@ trait Expressions {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-struct Intrinsic {
-    pub name: String,
-    pub args: Vec<TypedExpression>,
-}
-
-impl Intrinsic {
-    fn resolve(self) -> TypedExpression {
-        comptime::resolve_intrinsic(&self.name, self.args)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum StatementKind {
     Let {
         var: TypedVar,
@@ -199,7 +187,6 @@ pub enum StatementKind {
     //     value: TypedExpression,
     //     cases: Vec<MatchCase>,
     // },
-    Intrinsic(Intrinsic),
     Expression(Box<TypedExpression>), // a subclass of expressions being executed for side effects
 }
 
@@ -286,6 +273,18 @@ impl TypedStatement {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Intrinsic {
+    name: String,
+    args: Vec<TypedExpression>,
+}
+
+impl Intrinsic {
+    fn resolve(self, instantiated_types: &HashMap<String, Type>) -> TypedExpression {
+        comptime::resolve_intrinsic(&self.name, self.args, instantiated_types)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExpressionKind {
     Literal(Literal),
     Ident(String),
@@ -298,8 +297,52 @@ pub enum ExpressionKind {
     Idx(Box<TypedExpression>, Box<TypedExpression>),
     // this is for comptime intrinsics
     // these should all be erased by SSA conversion
+    Intrinsic(Intrinsic),
     Type(Type),
     Self_,
+}
+
+impl ExpressionKind {
+    fn resolve(self, instantiated_types: &HashMap<String, Type>) -> ExpressionKind {
+        match self {
+            Self::Array(elems) => {
+                let mut resolved_elems = Vec::new();
+                for elem in elems {
+                    resolved_elems.push(elem.resolve(instantiated_types));
+                }
+                ExpressionKind::Array(resolved_elems)
+            }
+            Self::Idx(arr, idx) => ExpressionKind::Idx(
+                Box::new(arr.resolve(instantiated_types)),
+                Box::new(idx.resolve(instantiated_types)),
+            ),
+            Self::FieldAccess(expr, field) => {
+                ExpressionKind::FieldAccess(Box::new(expr.resolve(instantiated_types)), field)
+            }
+            Self::BinOp(op, lhs, rhs) => ExpressionKind::BinOp(
+                op,
+                Box::new(lhs.resolve(instantiated_types)),
+                Box::new(rhs.resolve(instantiated_types)),
+            ),
+            Self::FnCall(name, args) => ExpressionKind::FnCall(
+                name,
+                args.into_iter()
+                    .map(|arg| arg.resolve(instantiated_types))
+                    .collect(),
+            ),
+            Self::RecordInit(name, assignments) => ExpressionKind::RecordInit(
+                name,
+                assignments
+                    .into_iter()
+                    .map(|(name, expr)| (name, expr.resolve(instantiated_types)))
+                    .collect(),
+            ),
+            // this is handled in typeexpression
+            Self::Intrinsic(_) => unreachable!(),
+            Self::DataConstructor(_, _) => todo!(),
+            ek => ek,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -307,6 +350,20 @@ pub struct TypedExpression {
     pub kind: ExpressionKind,
     pub ty: Type,
     pub span: Span,
+}
+
+impl TypedExpression {
+    pub fn resolve(self, instantiated_types: &HashMap<String, Type>) -> TypedExpression {
+        if let ExpressionKind::Intrinsic(intrinsic) = self.kind {
+            return intrinsic.resolve(instantiated_types);
+        };
+
+        TypedExpression {
+            kind: self.kind.resolve(instantiated_types),
+            ty: self.ty,
+            span: self.span,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -356,6 +413,7 @@ impl TypedDecl {
     pub fn name(&self) -> Option<&str> {
         match &self.kind {
             DeclKind::Function { name, .. } => Some(name),
+            DeclKind::ComptimeFunction { name, .. } => Some(name),
             DeclKind::Record { name, .. } => Some(name),
             DeclKind::Enum { name, .. } => Some(name),
             DeclKind::ForeignDeclarations(..) => None,
@@ -372,8 +430,10 @@ pub struct Module {
     pub decls: Vec<TypedDecl>,
     // todo: idxs of decls that are exported?
     pub exports: Vec<TypedDecl>,
-    pub comptime_exports: Vec<Spanned<Declaration>>,
-    pub instantiated_comptime_decls: Vec<TypedDecl>,
+    // comptime fns map the uninst name to the typed decl, which is of type ComptimeFunction
+    pub comptime_fns: HashMap<String, TypedDecl>,
+    // monomorphic fns map the instantiated name to the typed decl, which is of type Function
+    pub monomorphic_fns: HashMap<String, TypedDecl>,
 }
 
 impl Module {
@@ -382,8 +442,8 @@ impl Module {
             name,
             decls: vec![],
             exports: vec![],
-            comptime_exports: vec![],
-            instantiated_comptime_decls: vec![],
+            comptime_fns: HashMap::new(),
+            monomorphic_fns: HashMap::new(),
         }
     }
 
@@ -394,15 +454,13 @@ impl Module {
         new_decls.append(&mut self.decls);
         self.decls = new_decls;
         self.exports.append(&mut other.exports);
-        self.comptime_exports.append(&mut other.comptime_exports);
-        self.instantiated_comptime_decls
-            .append(&mut other.instantiated_comptime_decls);
+        self.comptime_fns.extend(other.comptime_fns);
+        self.monomorphic_fns.extend(other.monomorphic_fns);
     }
 }
 
 #[derive(Default, Clone, Debug)]
 pub struct TyCtx {
-    comptime_fns: HashSet<String>,
     var_id_type: HashMap<String, Type>,
     user_def_types: HashMap<String, Type>,
 }
@@ -410,15 +468,6 @@ pub struct TyCtx {
 impl TyCtx {
     pub fn new() -> TyCtx {
         TyCtx::default()
-    }
-
-    fn insert_user_def_type(&mut self, name: String, ty: Type) {
-        self.user_def_types.insert(name, ty);
-    }
-
-    fn insert_comptime_fn(&mut self, name: String, ty: Type) {
-        self.comptime_fns.insert(name.clone());
-        self.user_def_types.insert(name, ty);
     }
 
     pub fn get_user_def_type(&self, name: &str) -> Option<Type> {
@@ -452,10 +501,6 @@ impl<'a> ScopedCtx<'a> {
                 None => None,
             },
         }
-    }
-
-    fn insert_comptime_fn(&mut self, name: String, ty: Type) {
-        self.ctx.insert_comptime_fn(name, ty);
     }
 
     fn insert_var(&mut self, name: String, ty: Type) {
@@ -562,95 +607,33 @@ fn extract_module(
         name: modules[0].0.clone(),
         decls: vec![],
         exports: vec![],
-        comptime_exports: vec![],
-        instantiated_comptime_decls: vec![],
+        comptime_fns: HashMap::new(),
+        monomorphic_fns: HashMap::new(),
     };
 
     Ok((module, filt_decls))
 }
 
-pub fn extract_comptime_fns(
-    decls: Vec<Spanned<Declaration>>,
-) -> (Vec<Spanned<Declaration>>, Vec<Spanned<Declaration>>) {
-    let mut comptime_fns = vec![];
-    let mut filt_decls = vec![];
-
-    for decl in decls {
-        match &decl.0.decl {
-            ASTDeclKind::Function(Function { arguments, .. }) => {
-                let has_comptime = arguments.iter().any(|(var, _)| var.is_comptime);
-                if has_comptime {
-                    comptime_fns.push(decl);
-                } else {
-                    filt_decls.push(decl);
-                }
-            }
-            _ => filt_decls.push(decl),
-        }
-    }
-
-    (comptime_fns, filt_decls)
-}
-
-// fn comptime_fn_calls<'a>(
-//     ctx: &mut ScopedCtx,
-//     decl: &mut TypedDecl,
-//     comptime_fns: HashMap<String, Spanned<Declaration>>,
-// ) -> Vec<TypedDecl> {
-//     let DeclKind::Function { body, .. } = &mut decl.kind else {
-//         return vec![];
-//     };
-//
-//     let expressions = body.expressions();
-//     if expressions.is_empty() {
-//         return vec![];
-//     }
-//
-//     let mut monomorphic_fns = vec![];
-//     for expr in expressions {
-//         if let ExpressionKind::FnCall(fn_name, args) = &expr.kind {
-//             if let Some(decl) = comptime_fns.get(fn_name) {
-//                 todo!()
-//             }
-//         }
-//     }
-//
-//     monomorphic_fns
-// }
-
 pub struct TypeChecker<'a> {
     decls: Vec<Spanned<Declaration>>,
     module: Module,
     imports: Vec<TypedDecl>,
-    comptime_fns: HashMap<String, Spanned<Function>>,
     ty_decls: Vec<TypedDecl>,
-    monomorphic_fns: HashMap<String, TypedDecl>,
+    // comptime fns map the uninst name to the typed decl, which is of type ComptimeFunction
+    pub comptime_fns: HashMap<String, TypedDecl>,
+    // monomorphic fns map the instantiated name to the typed decl, which is of type Function
+    pub monomorphic_fns: HashMap<String, TypedDecl>,
     top_ctx: *mut ScopedCtx<'a>,
 }
 
-impl<'a> TypeChecker<'a> {
+impl TypeChecker<'_> {
     pub fn new(
         decls: Vec<Spanned<Declaration>>,
         imports: Vec<TypedDecl>,
-        comptime_imports: Vec<Spanned<Declaration>>,
+        comptime_fns: HashMap<String, TypedDecl>,
+        monomorphic_fns: HashMap<String, TypedDecl>,
     ) -> TypeResult<Self> {
-        let (mut module, decls) = extract_module(decls)?;
-        let (mut comptime_fns, decls) = extract_comptime_fns(decls);
-        comptime_fns.extend(comptime_imports);
-        let mut comptime_map = HashMap::new();
-        for (decl, span) in comptime_fns {
-            let name = decl.name().unwrap().to_string();
-            if decl.visibility.to_bool() {
-                module.comptime_exports.push((decl.clone(), span.clone()));
-            }
-
-            let declfn = match decl.decl {
-                ASTDeclKind::Function(fn_) => fn_,
-                _ => unreachable!(),
-            };
-
-            comptime_map.insert(name, (declfn, span));
-        }
+        let (module, decls) = extract_module(decls)?;
 
         let ctx = TyCtx::new();
         let scoped_ctx = ScopedCtx::from_tyctx(ctx);
@@ -659,8 +642,8 @@ impl<'a> TypeChecker<'a> {
             decls,
             imports,
             ty_decls: vec![],
-            monomorphic_fns: HashMap::new(),
-            comptime_fns: comptime_map,
+            monomorphic_fns,
+            comptime_fns,
             top_ctx: Box::into_raw(Box::new(scoped_ctx)),
         };
 
@@ -698,14 +681,14 @@ impl<'a> TypeChecker<'a> {
 
         let decls = decls.clone();
         for decl in decls {
-            let (name, arguments, _body, ret_type, num_comptime_args) = match &decl.0.decl {
+            let (name, arguments, _body, ret_type) = match &decl.0.decl {
                 ASTDeclKind::Function(Function {
                     name,
                     arguments,
-                    num_comptime_args,
+                    num_comptime_args: _,
                     body,
                     ret_type,
-                }) => (name, arguments, body, ret_type, num_comptime_args),
+                }) => (name, arguments, body, ret_type),
                 ASTDeclKind::Procedures(type_name, fns) => {
                     for fn_def in fns {
                         let Function {
@@ -746,11 +729,7 @@ impl<'a> TypeChecker<'a> {
                 ret_type,
             };
             println!("registered fn {}: {}", name, signature);
-            if *num_comptime_args > 0 {
-                ctx.insert_comptime_fn(name.to_string(), Type::Fn(Box::new(signature)));
-            } else {
-                ctx.insert_user_def_type(name.to_string(), Type::Fn(Box::new(signature)));
-            }
+            ctx.insert_user_def_type(name.to_string(), Type::Fn(Box::new(signature)));
         }
 
         for decl in imports {
@@ -779,12 +758,18 @@ impl<'a> TypeChecker<'a> {
             if ty_decl.visible {
                 exports.push(ty_decl.clone());
             }
-            self.ty_decls.push(ty_decl);
+            if matches!(ty_decl.kind, DeclKind::ComptimeFunction { .. }) {
+                self.comptime_fns
+                    .insert(ty_decl.name().unwrap().to_string(), ty_decl.clone());
+            } else {
+                self.ty_decls.push(ty_decl);
+            }
         }
 
-        println!("ty decls: {:#?}", self.ty_decls);
         self.module.decls = self.ty_decls;
         self.module.exports = exports;
+        self.module.comptime_fns = self.comptime_fns;
+        self.module.monomorphic_fns = self.monomorphic_fns;
 
         Ok(self.module)
     }
@@ -801,8 +786,7 @@ impl<'a> TypeChecker<'a> {
                     // kind of a hack, changing the method name to be a function that just exists with
                     // the name type::name
                     proc_fn.name = format!("{}::{}", ty, proc_fn.name);
-                    let ty_fn =
-                        self.type_fn(ctx, proc_fn, span, Some(ty.clone()), HashMap::new())?;
+                    let ty_fn = self.type_fn(ctx, proc_fn, span, Some(ty.clone()))?;
                     ty_procs.push(ty_fn);
                 }
                 TypedDecl {
@@ -813,7 +797,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             ASTDeclKind::Function(fn_def) => {
-                let mut fn_decl = self.type_fn(ctx, fn_def, decl.1, None, HashMap::new())?;
+                let mut fn_decl = self.type_fn(ctx, fn_def, decl.1, None)?;
                 fn_decl.visible = decl.0.visibility.to_bool();
                 fn_decl
             }
@@ -1069,7 +1053,6 @@ impl<'a> TypeChecker<'a> {
         fn_def: Function,
         span: Span,
         self_arg: Option<Type>,
-        instantiated_comptime_types: HashMap<String, Type>,
     ) -> TypeResult<TypedDecl> {
         let Function {
             name,
@@ -1100,22 +1083,11 @@ impl<'a> TypeChecker<'a> {
             let ty_var = type_var(&mut body_ctx, var, ity)?;
             if ty_var.is_comptime {
                 fn_is_comptime = true;
-                body_ctx.insert_var(
-                    ty_var.id.clone(),
-                    instantiated_comptime_types
-                        .get(&ty_var.id)
-                        .unwrap_or_else(|| {
-                            panic!("{} not found in instantiated_comptime_types {instantiated_comptime_types:?}", ty_var.id)
-                        })
-                        .clone(),
-                );
-                comptime_args.push(ty_var);
+                comptime_args.push(ty_var.id);
             } else {
                 args.push(ty_var);
             }
         }
-        println!("args: {args:?}");
-        println!("cmptime: {comptime_args:?}");
 
         if comptime_args.len() != num_comptime_args {
             return Err(TypeError::new(
@@ -1127,35 +1099,9 @@ impl<'a> TypeChecker<'a> {
             ));
         }
 
-        let name = if fn_is_comptime {
-            println!("is comptime");
-            let mut comp_time_arg_names = String::new();
-            for arg in &comptime_args {
-                let name = instantiated_comptime_types
-                    .get(&arg.id)
-                    .unwrap()
-                    .to_string();
-                comp_time_arg_names.push_str(&name);
-            }
-            let instantiated_fn_name = format!("{}_{}", name, comp_time_arg_names);
-            if self.monomorphic_fns.contains_key(&instantiated_fn_name) {
-                // todo: improve this
-                return Ok(self
-                    .monomorphic_fns
-                    .get(&instantiated_fn_name)
-                    .unwrap()
-                    .clone());
-            }
-            instantiated_fn_name
-        } else {
-            name
-        };
-
-        println!("typing stmt");
         let body = self.type_stmt(&mut body_ctx, body)?;
-        println!("typed stmt");
         let ret = match body.has_return() {
-            Some(ty) => ty.instantiate_type(&instantiated_comptime_types),
+            Some(ty) => ty,
             None => {
                 if ret_type.is_some() {
                     return Err(TypeError::new(TypeErrorKind::NoReturn, body.span));
@@ -1164,7 +1110,6 @@ impl<'a> TypeChecker<'a> {
                 Type::Unit
             }
         };
-        println!("ret: {}", ret);
 
         if !(ret == Type::Unit) && ret_type.is_none() {
             return Err(TypeError::new(
@@ -1192,24 +1137,34 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
+        let kind = if fn_is_comptime {
+            DeclKind::ComptimeFunction {
+                name: name.clone(),
+                comptime_args,
+                arguments: args,
+                body,
+                ret_type,
+            }
+        } else {
+            DeclKind::Function {
+                name: name.clone(),
+                arguments: args,
+                body,
+                ret_type,
+            }
+        };
+
         let ty_decl = TypedDecl {
             ty: match ctx.get_user_def_type(&name) {
                 Some(ty) => ty,
                 None => return Err(TypeError::new(TypeErrorKind::IdentUsedAsFn(name), span)),
             },
-            kind: DeclKind::Function {
-                name: name.clone(),
-                arguments: args,
-                body,
-                ret_type,
-                is_comptime: fn_is_comptime,
-            },
+            kind,
             span,
             visible: false,
         };
-        println!("out of tyfn for {name}");
         if fn_is_comptime {
-            self.monomorphic_fns.insert(name, ty_decl.clone());
+            self.comptime_fns.insert(name, ty_decl.clone());
         }
         Ok(ty_decl)
     }
@@ -1253,7 +1208,14 @@ impl<'a> TypeChecker<'a> {
                     ty_args.push(self.type_expr(ctx, arg)?);
                 }
 
-                comptime::resolve_intrinsic(&name, ty_args)
+                TypedExpression {
+                    ty: comptime::intrinsic_type(&name),
+                    kind: ExpressionKind::Intrinsic(Intrinsic {
+                        name,
+                        args: ty_args,
+                    }),
+                    span: expr.1,
+                }
             }
             Expression::MethodCall(structure, method_name, args) => {
                 let structure = self.type_expr(ctx, *structure)?;
@@ -1459,33 +1421,36 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Expression::FnCall(name, args) => {
-                let mut ty_args = vec![];
+                let mut ty_args = VecDeque::new();
                 for arg in args {
-                    ty_args.push(self.type_expr(ctx, arg)?);
+                    ty_args.push_back(self.type_expr(ctx, arg)?);
                 }
 
-                let name = if let Some((comptime_fn, span)) = self.comptime_fns.get(&name) {
-                    let decl_ctx = unsafe { &mut *self.top_ctx };
+                let name = if let Some(comptime_fn) = self.comptime_fns.get(&name) {
+                    let _decl_ctx = unsafe { &mut *self.top_ctx };
                     let mut instantiated_comptime_types = HashMap::new();
 
-                    #[allow(clippy::needless_range_loop)]
-                    for i in 0..comptime_fn.num_comptime_args {
-                        let arg_name = comptime_fn.arguments[i].0.name.clone();
-                        let ExpressionKind::Type(arg_type) = &ty_args[i].kind else {
+                    #[allow(unused)]
+                    let DeclKind::ComptimeFunction {
+                        name,
+                        comptime_args,
+                        arguments,
+                        body,
+                        ret_type,
+                    } = &comptime_fn.kind
+                    else {
+                        unreachable!()
+                    };
+
+                    for arg_name in comptime_args {
+                        let ty_arg = ty_args.pop_front().unwrap();
+                        let ExpressionKind::Type(arg_type) = ty_arg.kind else {
                             panic!("comptime fn arg is not a type")
                         };
-                        instantiated_comptime_types.insert(arg_name, arg_type.clone());
+                        instantiated_comptime_types.insert(arg_name.to_string(), arg_type);
                     }
 
-                    println!("here: {:?}", instantiated_comptime_types);
-                    let res = self.type_fn(
-                        decl_ctx,
-                        comptime_fn.clone(),
-                        span.clone(),
-                        None,
-                        instantiated_comptime_types,
-                    )?;
-                    res.name().unwrap().to_string()
+                    self.instantiate_comptime_fn(comptime_fn.clone(), instantiated_comptime_types)
                 } else {
                     name
                 };
@@ -1499,8 +1464,6 @@ impl<'a> TypeChecker<'a> {
                     }
                     Some(t) => t,
                 };
-
-                println!("2");
 
                 let ret_ty = if let Type::Fn(fn_) = fn_type {
                     let FunctionSignature {
@@ -1535,7 +1498,7 @@ impl<'a> TypeChecker<'a> {
                 };
 
                 TypedExpression {
-                    kind: ExpressionKind::FnCall(name, ty_args),
+                    kind: ExpressionKind::FnCall(name, ty_args.into()),
                     ty: ret_ty,
                     span: expr.1,
                 }
@@ -1606,5 +1569,83 @@ impl<'a> TypeChecker<'a> {
         };
 
         Ok(expr)
+    }
+
+    // this either instantiates a comptime fn if it hasn't already been, otherwise it just returns
+    // the already instantiated comptime fn name. this does NOT return the typedecl, it just
+    // inserts it into the decls
+    fn instantiate_comptime_fn(
+        &mut self,
+        decl: TypedDecl,
+        instantiated_type_args: HashMap<String, Type>,
+    ) -> String {
+        let decl_span = decl.span.clone();
+        let DeclKind::ComptimeFunction {
+            name,
+            comptime_args: _,
+            arguments,
+            mut body,
+            ret_type,
+        } = decl.kind
+        else {
+            unreachable!()
+        };
+
+        let mut instantiated_name = name.clone();
+        for arg_type in instantiated_type_args.values() {
+            instantiated_name.push_str(&format!("_{arg_type}"));
+        }
+
+        if self.monomorphic_fns.contains_key(&instantiated_name) {
+            return instantiated_name;
+        }
+
+        let exprs = body.expressions();
+        for expr in exprs {
+            // todo: remove this clone
+            *expr = expr.clone().resolve(&instantiated_type_args)
+        }
+
+        let arguments: Vec<TypedVar> = arguments
+            .into_iter()
+            .map(|tyvar| {
+                let ty = tyvar.ty.instantiate_type(&instantiated_type_args);
+                let is_comptime = tyvar.is_comptime;
+                let id = tyvar.id.clone();
+                let span = tyvar.span.clone();
+                TypedVar {
+                    ty,
+                    is_comptime,
+                    id,
+                    span,
+                }
+            })
+            .collect();
+
+        let ret_type = ret_type.map(|ty| ty.instantiate_type(&instantiated_type_args));
+        let fn_ty = Type::Fn(Box::new(FunctionSignature {
+            param_types: arguments.iter().map(|var| var.ty.clone()).collect(),
+            ret_type: ret_type.clone().unwrap_or(Type::Unit),
+        }));
+
+        let concrete_decl = TypedDecl {
+            ty: fn_ty.clone(),
+            kind: DeclKind::Function {
+                name: instantiated_name.clone(),
+                arguments,
+                body,
+                ret_type,
+            },
+            visible: decl.visible,
+            span: decl_span,
+        };
+
+        unsafe { self.top_ctx.as_mut().unwrap() }
+            .insert_user_def_type(instantiated_name.clone(), fn_ty);
+
+        self.monomorphic_fns
+            .insert(instantiated_name.clone(), concrete_decl.clone());
+        self.ty_decls.push(concrete_decl);
+        instantiated_name
     }
 }

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::PathBuf,
     process::{Command, exit},
@@ -104,7 +105,8 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
     let module_uses = use_analysis::extract_module_uses(&prog);
     let mut additional_modules = Vec::new();
     let mut imports = Vec::new();
-    let mut comptime_imports = Vec::new();
+    let mut comptime_fns = HashMap::new();
+    let mut monomorphic_fns = HashMap::new();
 
     for module_import in module_uses {
         let module_name = module_import.join(":");
@@ -115,8 +117,10 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
         match module_files {
             Ok(module_files) => {
                 let module = compile_module(module_name, module_files, options);
-                imports.append(&mut module.exports.clone());
-                comptime_imports.append(&mut module.comptime_exports.clone());
+                // todo: avoid these clones
+                imports.extend(module.exports.clone());
+                comptime_fns.extend(module.comptime_fns.clone());
+                monomorphic_fns.extend(module.monomorphic_fns.clone());
 
                 additional_modules.push(module);
             }
@@ -126,7 +130,7 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
         }
     }
 
-    let type_checker = match TypeChecker::new(prog, imports, comptime_imports) {
+    let type_checker = match TypeChecker::new(prog, imports, comptime_fns, monomorphic_fns) {
         Ok(type_checker) => type_checker,
         Err(e) => {
             report_error(file, src, "Type Error", e);
