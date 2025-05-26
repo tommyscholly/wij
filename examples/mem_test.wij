@@ -16,5 +16,9 @@ fn main() -> int {
     let x: *Record = alloc(Record);
     print_int(y.a);
 
+    let two = 2;
+    two = 50;
+    print_int(two);
+
     return 0;
 }

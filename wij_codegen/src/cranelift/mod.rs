@@ -371,6 +371,12 @@ impl<'ctx> FunctionTranslator<'ctx> {
                 let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
                 self.builder.def_var(var, ptr);
             }
+            Assign(lhs, rhs) => {
+                let lhs_var = self.pctx.get_variable(lhs.0);
+                let rhs_var = self.pctx.get_variable(rhs.0);
+                let rhs_val = self.builder.use_var(rhs_var);
+                self.builder.def_var(lhs_var, rhs_val);
+            }
             BinOp { op, lhs, rhs } => {
                 let lhs_var = self.pctx.get_variable(lhs.0);
                 let rhs_var = self.pctx.get_variable(rhs.0);

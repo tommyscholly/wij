@@ -95,6 +95,9 @@ pub enum Operation {
     Load(ValueID, MIRType),  // (address)
     Store(ValueID, ValueID), // (address, value)
 
+    // Cranelift automatically converts to SSA, so we can break SSA here
+    Assign(ValueID, ValueID),
+
     // array/record operations, very similar to LLVM
     GetElementPtr(ValueID, Vec<i32>), // base + indices
     #[allow(unused)]
@@ -573,11 +576,23 @@ impl SSABuilder {
                 let lhs_value = self.lower_expression(program, function, lhs);
                 let rhs_value = self.lower_expression(program, function, rhs);
 
-                self.add_instruction_to_current_block(
-                    function,
-                    Operation::Store(lhs_value.id, rhs_value.id),
-                    MIRType::Unit,
-                );
+                match lhs_value.ty {
+                    MIRType::Ptr => {
+                        self.add_instruction_to_current_block(
+                            function,
+                            Operation::Store(lhs_value.id, rhs_value.id),
+                            MIRType::Unit,
+                        );
+                    }
+                    _ => {
+                        // todo: ssa assign
+                        self.add_instruction_to_current_block(
+                            function,
+                            Operation::Assign(lhs_value.id, rhs_value.id),
+                            MIRType::Unit,
+                        );
+                    }
+                }
             }
             _ => {
                 println!("need to handle stmt: {:?}", stmt);
