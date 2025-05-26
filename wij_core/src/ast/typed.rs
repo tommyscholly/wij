@@ -522,17 +522,24 @@ impl<'a> ScopedCtx<'a> {
     }
 
     fn resolve_type(&self, ty: Type) -> Type {
-        if let Type::UserDef(name) = &ty {
-            return match self.get_user_def_type(name) {
+        match &ty {
+            Type::UserDef(name) => match self.get_user_def_type(name) {
                 Some(ty) => ty,
                 None => match self.parent {
                     Some(parent) => parent.resolve_type(ty),
                     None => ty,
                 },
-            };
+            },
+            Type::Ptr(ty) => Type::Ptr(Box::new(self.resolve_type(*ty.clone()))),
+            Type::Array(ty) => Type::Array(Box::new(self.resolve_type(*ty.clone()))),
+            Type::Record(fields) => Type::Record(
+                fields
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), self.resolve_type(ty.clone())))
+                    .collect(),
+            ),
+            _ => ty,
         }
-
-        ty
     }
 }
 
@@ -544,7 +551,10 @@ fn type_var(ctx: &mut ScopedCtx, var: Spanned<Var>, inferred_ty: Type) -> TypeRe
         }
         (Some(ty), ity) => {
             let ty = ctx.resolve_type(ty.clone());
+            println!("ty: {}, ity: {}", ty, ity);
             let ity = ctx.resolve_type(ity);
+            println!("ty: {}, ity: {}", ty, ity);
+
             if ty != ity {
                 return Err(TypeError::new(
                     TypeErrorKind::TypeMismatch {

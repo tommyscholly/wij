@@ -5,11 +5,13 @@ use core:fmt;
 
 type Record = {
     a: int,
-    b: int
+    b: int,
+    c: int,
+    d: int,
 }
 
 fn main() -> int {
-    let x: *int = alloc(Record);
+    let x: *Record = alloc(Record);
 
     return 0;
 }

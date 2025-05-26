@@ -608,7 +608,7 @@ impl Expression {
                                     span.start..e_span.end,
                                 )
                             }
-                            Err(_) => (Expression::Ident(ident), span),
+                            Err(_) => (Expression::Type(Type::UserDef(ident)), span),
                         }
                     } else {
                         (Expression::Ident(ident), span)

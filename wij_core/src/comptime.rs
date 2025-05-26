@@ -32,8 +32,10 @@ pub fn resolve_intrinsic(
     match name {
         "sizeOf" => {
             let arg = args.remove(0);
-            let ExpressionKind::Ident(ty_name) = arg.kind else {
-                panic!("got {arg:?}, expected type")
+            let ty_name = match arg.kind {
+                ExpressionKind::Type(Type::UserDef(ty_name)) => ty_name,
+                ExpressionKind::Ident(ty_name) => ty_name,
+                _ => panic!("got {arg:?}, expected type"),
             };
             let ty = instantiated_types.get(&ty_name).expect("ty not found");
             size_of(ty)
