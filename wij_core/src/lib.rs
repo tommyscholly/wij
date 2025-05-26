@@ -5,7 +5,7 @@ mod mir;
 
 pub use ast::{
     ParseError, Parser,
-    typed::{Module, ScopedCtx, type_check},
+    typed::{Module, ScopedCtx, TypeChecker},
     use_analysis,
 };
 pub use lex::tokenize;
@@ -21,4 +21,8 @@ pub trait WijError {
 
 pub trait Graphviz {
     fn dot(&self) -> String;
+}
+
+pub trait SizeOf {
+    fn size_of(&self) -> usize;
 }

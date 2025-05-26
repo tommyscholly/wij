@@ -1,0 +1,7 @@
+module main;
+
+use core:mem;
+
+fn main() {
+    let x: *int = alloc(int);
+}

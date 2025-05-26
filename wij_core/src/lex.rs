@@ -82,6 +82,8 @@ pub enum Keyword {
 
     Self_,
     Comptime,
+
+    Opaqueptr,
 }
 
 impl TryFrom<&str> for Keyword {
@@ -115,6 +117,7 @@ impl TryFrom<&str> for Keyword {
             "procs" => Ok(Keyword::Procs),
             "self" => Ok(Keyword::Self_),
             "comptime" => Ok(Keyword::Comptime),
+            "opaqueptr" => Ok(Keyword::Opaqueptr),
             _ => Err(()),
         }
     }
@@ -203,7 +206,7 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                     }
                 }
                 '@' => {
-                    advance_single_token!(self, Token::Tick)
+                    advance_single_token!(self, Token::At)
                 }
                 '\'' => {
                     advance_single_token!(self, Token::Tick)

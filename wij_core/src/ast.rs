@@ -37,6 +37,7 @@ pub enum ParseErrorKind {
     ExpectedSemiColon,
     EndOfInput,
     TypeNameCapitalized,
+    ComptimeArgOrder,
     InvalidVisibility,
 }
 
@@ -109,11 +110,24 @@ where
 pub struct Var {
     pub name: String,
     pub ty: Option<Type>,
+    pub is_comptime: bool,
 }
 
 impl Parseable for Var {
     fn parse(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
+        let mut is_comptime = false;
+        let mut start_span = None;
+        if let Some((Token::Keyword(Keyword::Comptime), comptime_span)) = parser.peek_next() {
+            is_comptime = true;
+            start_span = Some(comptime_span);
+            parser.pop_next();
+        }
+
         let (name, span) = parser.expect_ident()?;
+        let span = match start_span {
+            Some(start_span) => start_span.start..span.end,
+            None => span,
+        };
 
         let (ty, ty_span_end) = if let Some((Token::Colon, _)) = parser.peek_next() {
             parser.pop_next();
@@ -122,15 +136,40 @@ impl Parseable for Var {
         } else {
             (None, span.end)
         };
+        if is_comptime {
+            if let Some(ty) = &ty {
+                if ty != &Type::TypeType {
+                    return Err(ParseError::with_reason(
+                        ParseErrorKind::MalformedVariable,
+                        span.start..ty_span_end,
+                        "Comptime variables must be of type `type`",
+                    ));
+                }
+            } else {
+                return Err(ParseError::with_reason(
+                    ParseErrorKind::MalformedVariable,
+                    span.start..ty_span_end,
+                    "Comptime variables must be of type `type`",
+                ));
+            }
+        }
 
         let span = span.start..ty_span_end;
-        Ok((Var { name, ty }, span))
+        Ok((
+            Var {
+                name,
+                ty,
+                is_comptime,
+            },
+            span,
+        ))
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Literal {
     Int(i32),
+    Usize(usize),
     Str(String),
     Bool(bool),
 }
@@ -427,6 +466,10 @@ pub enum Expression {
     RecordInit(String, Vec<(String, Spanned<Expression>)>),
     DataConstruction(String, Option<Box<Spanned<Expression>>>),
     Idx(Box<Spanned<Expression>>, Box<Spanned<Expression>>),
+    // comptime intrinsics are denoted by @
+    // they can have optional arguments
+    Type(Type), // these great erased prior to SSA conversion
+    Intrinsic(String, Vec<Spanned<Expression>>),
     Self_,
 }
 
@@ -515,6 +558,16 @@ impl Expression {
                 let end_span = parser.expect_next(Token::RBracket)?;
                 (Expression::Array(elems), start_span.start..end_span.1.end)
             }
+            Some((Token::At, span)) => {
+                let ident = parser.expect_ident()?.0;
+                let _lparen = parser.expect_next(Token::LParen)?;
+                let args = parse_fn_call_args(parser)?;
+                let (_, rparen_span) = parser.expect_next(Token::RParen)?;
+                (
+                    Expression::Intrinsic(ident, args),
+                    span.start..rparen_span.end,
+                )
+            }
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
@@ -570,11 +623,18 @@ impl Expression {
                 (expr.0, full_span) // return the inner expression with updated span
             }
             Some((token, span)) => {
-                return Err(ParseError::with_reason(
-                    ParseErrorKind::MalformedExpression,
-                    span,
-                    &format!("Expected expression, got {:?}", token),
-                ));
+                parser.push_front((token.clone(), span.clone()));
+
+                match Type::parse(parser) {
+                    Ok((ty, span)) => (Expression::Type(ty), span),
+                    Err(_e) => {
+                        return Err(ParseError::with_reason(
+                            ParseErrorKind::MalformedExpression,
+                            span,
+                            &format!("Expected expression, got {:?}", token),
+                        ));
+                    }
+                }
             }
             None => return Err(ParseError::spanless(ParseErrorKind::EndOfInput)),
         };
@@ -730,6 +790,7 @@ pub struct EnumVariant {
 pub struct Function {
     name: String,
     arguments: Vec<Spanned<Var>>,
+    num_comptime_args: usize,
     body: Spanned<Statement>,
     ret_type: Option<Type>,
 }
@@ -740,6 +801,23 @@ impl Parseable for Function {
         let (name, _) = parser.expect_ident()?;
         let _lparen = parser.expect_next(Token::LParen)?;
         let arguments = parse_args(parser, Token::RParen)?;
+        let mut num_comptime_args = 0;
+        // could probably do this better
+        let mut still_looking_for_comptime = true;
+        for (arg, span) in &arguments {
+            if arg.is_comptime {
+                if !still_looking_for_comptime {
+                    return Err(ParseError::with_reason(
+                        ParseErrorKind::ComptimeArgOrder,
+                        span.clone(),
+                        "Comptime arguments must come first",
+                    ));
+                }
+                num_comptime_args += 1;
+            } else {
+                still_looking_for_comptime = false;
+            }
+        }
         let ret_type = if let Some((Token::Arrow, _)) = parser.peek_next() {
             parser.pop_next();
             Some(Type::parse(parser)?.0)
@@ -752,6 +830,7 @@ impl Parseable for Function {
             Function {
                 name,
                 arguments,
+                num_comptime_args,
                 body: (body, body_span),
                 ret_type,
             },
@@ -796,6 +875,17 @@ impl Visibility {
 pub struct Declaration {
     pub visibility: Visibility,
     pub decl: DeclKind,
+}
+
+impl Declaration {
+    fn name(&self) -> Option<String> {
+        match &self.decl {
+            DeclKind::Function(Function { name, .. }) => Some(name.clone()),
+            DeclKind::Record { name, .. } => Some(name.clone()),
+            DeclKind::Enum { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
 }
 
 fn parse_args(parser: &mut Parser, last_token: Token) -> ParseResult<Vec<Spanned<Var>>> {

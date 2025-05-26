@@ -6,7 +6,8 @@ foreign {
 }
 
 pub fn alloc(comptime T: type) -> *T {
-    let allocation = malloc(@sizeOf(T);
-    return @ptrCast(*T, allocation);
+    let allocation = malloc(@sizeOf(T));
+    let cast: *T = @cast(allocation);
+    return cast;
 }
 

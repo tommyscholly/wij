@@ -61,6 +61,7 @@ struct Value {
 #[derive(Debug, Clone)]
 pub enum Operation {
     IntConst(i32),
+    UsizeConst(usize),
     BoolConst(bool),
     // unsure if i will actually be doing str constants
     // or if we need to basically allocate a str struct that has procedures on it
@@ -243,6 +244,7 @@ impl SSABuilder {
                             arguments,
                             body,
                             ret_type,
+                            is_comptime: _,
                         } = &fn_decl.kind
                         else {
                             panic!("help")
@@ -257,6 +259,7 @@ impl SSABuilder {
                     arguments,
                     body,
                     ret_type,
+                    is_comptime: _,
                 } => {
                     println!("lowering fn: {}", name);
                     let fn_id =
@@ -563,6 +566,11 @@ impl SSABuilder {
                     function,
                     Operation::IntConst(*val),
                     MIRType::Int,
+                ),
+                Literal::Usize(val) => self.add_instruction_to_current_block(
+                    function,
+                    Operation::UsizeConst(*val),
+                    MIRType::Usize,
                 ),
                 Literal::Bool(val) => self.add_instruction_to_current_block(
                     function,
