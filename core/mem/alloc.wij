@@ -11,3 +11,8 @@ pub fn alloc(comptime T: type) -> *T {
     return cast;
 }
 
+pub fn alloc_buffer(comptime T: type, size: usize) -> *[T] {
+    let allocation = malloc(size * @sizeOf(T));
+    let cast: *[T] = @cast(allocation);
+    return cast;
+}

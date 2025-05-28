@@ -198,4 +198,8 @@ impl Type {
             ty => ty,
         }
     }
+
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Type::Int | Type::Usize)
+    }
 }

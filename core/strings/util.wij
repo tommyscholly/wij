@@ -1,13 +1,15 @@
 module strings;
 
-type StringData = {
-    buffer: *[byte]
+use core:mem;
+
+type String = {
+    buffer: *[byte],
     length: int
 }
 
 foreign {
     // transmute: fn(src: 'a) -> 'b;
-    strbytes: fn(string: str) -> *[byte];
+    // strbytes: fn(string: str) -> *[byte];
 }
 
 procs str {

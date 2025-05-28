@@ -1389,7 +1389,7 @@ impl TypeChecker<'_> {
             Expression::BinOp(op, lhs, rhs) => {
                 let ty_lhs = self.type_expr(ctx, *lhs)?;
                 let ty_rhs = self.type_expr(ctx, *rhs)?;
-                let bop_ty = match op {
+                let mut bop_ty = match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => Type::Int,
                     BinOp::And
                     | BinOp::Or
@@ -1412,7 +1412,7 @@ impl TypeChecker<'_> {
                     ));
                 }
 
-                if bop_ty == Type::Int && ty_lhs.ty != Type::Int {
+                if bop_ty.is_numeric() && !ty_lhs.ty.is_numeric() {
                     return Err(TypeError::new(
                         TypeErrorKind::TypeMismatch {
                             expected: Type::Int,
@@ -1420,6 +1420,8 @@ impl TypeChecker<'_> {
                         },
                         expr.1,
                     ));
+                } else {
+                    bop_ty = ty_lhs.ty.clone();
                 }
 
                 TypedExpression {
