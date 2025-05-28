@@ -30,6 +30,8 @@ pub enum Type {
     Unit,
     // compiler generated
     Any,
+    // the compiler creates this for string literals
+    RawStr,
 }
 
 impl SizeOf for Type {
@@ -59,6 +61,8 @@ impl SizeOf for Type {
             DataConstructor(_, data, _) => data.as_ref().map(|data| data.size_of()).unwrap_or(0), // todo: look up size
             Any => 0,
             Unit => 0,
+            // really this becomes a ptr to the data decl
+            RawStr => arch_size,
         }
     }
 }
@@ -106,6 +110,7 @@ impl Display for Type {
             Ptr(t) => write!(f, "*{}", t),
             Byte => write!(f, "byte"),
             Any => write!(f, "any"),
+            RawStr => write!(f, "rawstr"),
         }
     }
 }

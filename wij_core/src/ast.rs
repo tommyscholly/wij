@@ -259,6 +259,7 @@ impl Parseable for Statement {
             Some((Token::Keyword(Keyword::Return), span_start)) => {
                 parser.pop_next();
                 if let Some((Token::SemiColon, _)) = parser.peek_next() {
+                    let _ = parser.expect_next(Token::SemiColon)?;
                     Ok((
                         Statement::Return(None),
                         span_start.start..span_start.end + 1,

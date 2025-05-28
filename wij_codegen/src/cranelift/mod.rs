@@ -21,6 +21,7 @@ use cranelift::prelude::MemFlags;
 use cranelift::prelude::StackSlotData;
 use cranelift::prelude::StackSlotKind;
 use cranelift::prelude::Value;
+use cranelift_module::DataDescription;
 use cranelift_module::FuncId;
 use cranelift_module::Linkage;
 use cranelift_module::{Module, default_libcall_names};
@@ -376,6 +377,29 @@ impl<'ctx> FunctionTranslator<'ctx> {
                 let rhs_var = self.pctx.get_variable(rhs.0);
                 let rhs_val = self.builder.use_var(rhs_var);
                 self.builder.def_var(lhs_var, rhs_val);
+            }
+            StrConst(s) => {
+                let string_id = self
+                    .module
+                    .declare_data(&format!("str{}", val_id), Linkage::Local, false, false)
+                    .unwrap();
+
+                let mut string_data = DataDescription::new();
+                string_data.define(s.as_bytes().into());
+
+                self.module
+                    .define_data(string_id, &string_data)
+                    .expect("to define string literal");
+
+                let str_ptr = self
+                    .module
+                    .declare_data_in_func(string_id, self.builder.func);
+
+                let ptr = self.builder.ins().global_value(I64, str_ptr);
+
+                let ty = MIRType::Ptr.to_type();
+                let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
+                self.builder.def_var(var, ptr);
             }
             BinOp { op, lhs, rhs } => {
                 let lhs_var = self.pctx.get_variable(lhs.0);

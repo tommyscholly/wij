@@ -12,14 +12,6 @@ foreign {
     // strbytes: fn(string: str) -> *[byte];
 }
 
-procs str {
-    pub fn len() -> int {
-        // todo
-        return 5;
-    }
-
-    pub fn bytes() -> *[byte] {
-        // todo
-        return strbytes(self);
-    }
+pub fn new() {
+    return;
 }
