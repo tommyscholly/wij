@@ -996,6 +996,10 @@ impl TypeChecker<'_> {
                         None => return Err(err),
                     },
                 };
+                let val = val.map(|mut v| {
+                    v.ty = ty_var.ty.clone();
+                    v
+                });
 
                 let stmt_kind = StatementKind::Let {
                     var: ty_var,

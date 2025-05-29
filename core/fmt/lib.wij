@@ -13,17 +13,19 @@ foreign {
 // 
 // }
 
+pub fn print_int(x: int) {
+    write_int(x);
+}
 
 pub fn println(msg: String) {
     write(1, msg.bytes(), msg.len());
-    let n_byte: *byte = @cast("\n");
+    let n_byte: *byte = @cast(*byte, "\n");
     write(1, n_byte, 1);
 }
 
 pub fn print(msg: String) {
-    write(1, msg.bytes(), msg.len());
+    let len = msg.length;
+    print_int(len);
+    write(1, msg.bytes(), len);
 }
 
-pub fn print_int(x: int) {
-    write_int(x);
-}

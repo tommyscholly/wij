@@ -7,12 +7,12 @@ foreign {
 
 pub fn alloc(comptime T: type) -> *T {
     let allocation = malloc(@sizeOf(T));
-    let cast: *T = @cast(allocation);
+    let cast: *T = @cast(*T, allocation);
     return cast;
 }
 
 pub fn alloc_buffer(comptime T: type, size: int) -> *T {
     let allocation = malloc(size * @sizeOf(T));
-    let cast: *T = @cast(allocation);
+    let cast: *T = @cast(*T, allocation);
     return cast;
 }

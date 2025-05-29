@@ -195,6 +195,7 @@ fn main() {
 
     let mut compiled = HashSet::new();
     if let Some(modules) = compile_file(&options.file, &options, &mut compiled) {
+        println!("Modules: {:#?}", modules);
         let ssa_mod: Program = build_ssa(modules);
 
         if options.debug {

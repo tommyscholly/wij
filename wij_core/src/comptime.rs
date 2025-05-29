@@ -31,8 +31,12 @@ fn str_len(expr: TypedExpression) -> TypedExpression {
     }
 }
 
-fn cast(mut expr: TypedExpression) -> TypedExpression {
-    expr.ty = Type::Any;
+fn cast(ty: TypedExpression, mut expr: TypedExpression) -> TypedExpression {
+    let ty = match ty.kind {
+        ExpressionKind::Type(ty) => ty,
+        _ => panic!("got {ty:?}, expected type"),
+    };
+    expr.ty = ty;
     expr
 }
 
@@ -57,7 +61,11 @@ pub fn resolve_intrinsic(
             size_of(ty)
         }
         "strLen" => str_len(args.remove(0)),
-        "cast" => cast(args.remove(0)),
+        "cast" => {
+            let ty = args.remove(0);
+            let expr = args.remove(0);
+            cast(ty, expr)
+        }
         i => panic!("intrinsic {} not found", i),
     }
 }

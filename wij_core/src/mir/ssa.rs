@@ -384,24 +384,26 @@ impl SSABuilder {
     ) {
         match &stmt.kind {
             StatementKind::Let { var, value } => {
-                if let Some(expr) = value {
-                    let value = self.lower_expression(program, function, expr);
-
-                    function.symbols.insert(var.id.clone(), value.clone());
-                    self.var_defs.insert(var.id.clone(), value);
+                if let Some(init_expr) = value {
+                    let init_rvalue = self.lower_expression_rval(program, function, init_expr);
+                    self.var_defs.insert(var.id.clone(), init_rvalue.clone());
+                    function.symbols.insert(var.id.clone(), init_rvalue);
                 } else {
-                    // todo: if there is no initializer, should be allocating memory?
-                    // i suppose in a gc'd language that is fine? since we don't care about
-                    // optimial memory allocation
-                    let alloc_value = self.add_instruction_to_current_block(
-                        function,
-                        Operation::Alloca(self.convert_type(&var.ty, &program.types)),
-                        MIRType::Ptr,
-                    );
-
-                    self.var_defs.insert(var.id.clone(), alloc_value.clone());
-                    function.symbols.insert(var.id.clone(), alloc_value);
+                    // not handling unassigned variables
+                    todo!()
                 }
+            }
+            StatementKind::Assignment(lhs, rhs) => {
+                // lhs must be lval
+                let lhs_value = self.lower_expression_lval(program, function, lhs);
+                // rhs must be rval
+                let rhs_value = self.lower_expression_rval(program, function, rhs);
+
+                self.add_instruction_to_current_block(
+                    function,
+                    Operation::Store(lhs_value.id, rhs_value.id),
+                    MIRType::Unit,
+                );
             }
 
             StatementKind::Block(statements) => {
@@ -413,7 +415,7 @@ impl SSABuilder {
             StatementKind::Return(expr_opt) => {
                 let value = expr_opt
                     .as_ref()
-                    .map(|expr| self.lower_expression(program, function, expr));
+                    .map(|expr| self.lower_expression_rval(program, function, expr));
 
                 if let Some(block_id) = self.current_block {
                     if let Some(block) = function.blocks.get_mut(&block_id) {
@@ -429,7 +431,7 @@ impl SSABuilder {
                 then_block,
                 else_block,
             } => {
-                let cond_value = self.lower_expression(program, function, condition);
+                let cond_value = self.lower_expression_rval(program, function, condition);
 
                 let then_block_id = self.new_block();
                 let else_block_id = self.new_block();
@@ -543,29 +545,7 @@ impl SSABuilder {
             }
 
             StatementKind::Expression(expr) => {
-                self.lower_expression(program, function, expr);
-            }
-            StatementKind::Assignment(lhs, rhs) => {
-                let lhs_value = self.lower_expression(program, function, lhs);
-                let rhs_value = self.lower_expression(program, function, rhs);
-
-                match lhs_value.ty {
-                    MIRType::Ptr => {
-                        self.add_instruction_to_current_block(
-                            function,
-                            Operation::Store(lhs_value.id, rhs_value.id),
-                            MIRType::Unit,
-                        );
-                    }
-                    _ => {
-                        // todo: ssa assign
-                        self.add_instruction_to_current_block(
-                            function,
-                            Operation::Assign(lhs_value.id, rhs_value.id),
-                            MIRType::Unit,
-                        );
-                    }
-                }
+                self.lower_expression_rval(program, function, expr);
             }
             _ => {
                 println!("need to handle stmt: {:?}", stmt);
@@ -574,7 +554,7 @@ impl SSABuilder {
         }
     }
 
-    fn lower_expression(
+    fn lower_expression_rval(
         &mut self,
         program: &Program,
         function: &mut Function,
@@ -604,20 +584,70 @@ impl SSABuilder {
                 ),
             },
 
-            ExpressionKind::Ident(name) => self
-                .var_defs
-                .get(name)
-                .unwrap_or_else(|| {
-                    panic!("Undefined variable: {}", name);
-                })
-                .clone(),
+            // ExpressionKind::Ident(name) => self
+            //     .var_defs
+            //     .get(name)
+            //     .unwrap_or_else(|| {
+            //         panic!("Undefined variable: {}", name);
+            //     })
+            //     .clone(),
+            ExpressionKind::Ident(name) => {
+                let value_info = self
+                    .var_defs
+                    .get(name)
+                    .unwrap_or_else(|| panic!("Undefined variable: {}", name))
+                    .clone();
+
+                // If the var_defs stores a pointer (e.g., from Alloca),
+                // and the AST type is not itself a pointer/aggregate, we need to load.
+                let ast_type = &expr.ty;
+                let mir_type_of_value = self.convert_type(ast_type, &program.types);
+
+                if value_info.ty == MIRType::Ptr && mir_type_of_value != MIRType::Ptr {
+                    // Check if the MIR type of the value itself is an aggregate.
+                    // If `let s: MyStruct;`, `value_info` is Ptr, `mir_type_of_value` is Record.
+                    // In this case, `s` used as R-value means the pointer to the struct.
+                    match mir_type_of_value {
+                        MIRType::Array(_) | MIRType::Record(_) => {
+                            return value_info; // Pointer to aggregate is the R-value
+                        }
+                        _ => {
+                            // It's a pointer to a scalar or simple type, load it.
+                            return self.add_instruction_to_current_block(
+                                function,
+                                Operation::Load(value_info.id, mir_type_of_value.clone()),
+                                mir_type_of_value,
+                            );
+                        }
+                    }
+                }
+                value_info // Otherwise, it's already an R-value or a pointer that's used as such
+            }
+            ExpressionKind::FieldAccess(_, _) => {
+                let field_address_value = self.lower_expression_lval(program, function, expr);
+
+                let field_actual_mir_type = self.convert_type(&expr.ty, &program.types);
+                self.add_instruction_to_current_block(
+                    function,
+                    Operation::Load(field_address_value.id, field_actual_mir_type.clone()),
+                    field_actual_mir_type,
+                )
+            }
+            ExpressionKind::Idx(_, _) => {
+                // pass the whole expr
+                let element_address_value = self.lower_expression_lval(program, function, expr);
+                let element_actual_mir_type = self.convert_type(&expr.ty, &program.types);
+                self.add_instruction_to_current_block(
+                    function,
+                    Operation::Load(element_address_value.id, element_actual_mir_type.clone()),
+                    element_actual_mir_type,
+                )
+            }
 
             ExpressionKind::BinOp(op, lhs, rhs) => {
-                let lhs_value = self.lower_expression(program, function, lhs);
-                let rhs_value = self.lower_expression(program, function, rhs);
-
+                let lhs_value = self.lower_expression_rval(program, function, lhs);
+                let rhs_value = self.lower_expression_rval(program, function, rhs);
                 let op_kind = BinOpKind::from(op);
-
                 self.add_instruction_to_current_block(
                     function,
                     Operation::BinOp {
@@ -633,20 +663,8 @@ impl SSABuilder {
                 let arg_values = args
                     .iter()
                     .map(|arg| {
-                        let value = self.lower_expression(program, function, arg);
-                        if let MIRType::Ptr = &value.ty {
-                            self.add_instruction_to_current_block(
-                                function,
-                                Operation::Load(
-                                    value.id,
-                                    self.convert_type(&arg.ty, &program.types),
-                                ),
-                                self.convert_type(&arg.ty, &program.types),
-                            )
-                            .id
-                        } else {
-                            value.id
-                        }
+                        let value = self.lower_expression_rval(program, function, arg);
+                        value.id
                     })
                     .collect();
 
@@ -686,13 +704,7 @@ impl SSABuilder {
                 );
 
                 for (i, elem) in elements.iter().enumerate() {
-                    let elem_value = self.lower_expression(program, function, elem);
-
-                    // let idx_value = self.add_instruction_to_current_block(
-                    //     function,
-                    //     Operation::IntConst(i as i32),
-                    //     MIRType::Int,
-                    // );
+                    let elem_value = self.lower_expression_rval(program, function, elem);
 
                     let elem_ptr = self.add_instruction_to_current_block(
                         function,
@@ -710,126 +722,141 @@ impl SSABuilder {
                 array_ptr
             }
 
-            ExpressionKind::Idx(array, index) => {
-                let array_value = self.lower_expression(program, function, array);
-                // let index_value = self.lower_expression(program, function, index);
-                todo!();
-                let index_value = 0;
+            ExpressionKind::RecordInit(record_type_name, assignments) => {
+                // record lits are stack-allocated, expression evaluates to a pointer.
+                let record_mir_ty = program.types.get(record_type_name).unwrap().clone();
 
-                let elem_ptr = self.add_instruction_to_current_block(
+                let record_ptr_val = self.add_instruction_to_current_block(
                     function,
-                    Operation::GetElementPtr(array_value.id, vec![index_value]),
+                    Operation::Alloca(record_mir_ty),
                     MIRType::Ptr,
                 );
 
-                self.add_instruction_to_current_block(
-                    function,
-                    Operation::Load(elem_ptr.id, self.convert_type(&expr.ty, &program.types)),
-                    self.convert_type(&expr.ty, &program.types),
-                )
-            }
-
-            ExpressionKind::FieldAccess(record, field_name) => {
-                let record_value = self.lower_expression(program, function, record);
-                // let Type::UserDef(record_name) = &record.ty else {
-                //     // this should be unreachable due to type checking
-                //     println!("record: {:?} expr: {:?}", record, expr);
-                //     unreachable!();
-                // };
-
-                let field_idx = match &record.ty {
-                    Type::Record(fields) => fields
-                        .iter()
-                        .position(|(name, _)| name == field_name)
-                        .unwrap() as i32,
-                    _ => {
-                        println!("record: {:?} expr: {:?}", record, expr);
-                        unreachable!();
-                    }
-                };
-                let _field_type = match &record.ty {
-                    Type::Record(fields) => {
-                        &fields
-                            .iter()
-                            .find(|(name, _)| name == field_name)
-                            .unwrap()
-                            .1
-                    }
-                    _ => {
-                        unreachable!();
-                    }
-                };
-
-                // let field_idx = self
-                //     .record_field_idx(program, record_name, field_name)
-                //     .unwrap() as i32;
-
-                // deref the ptr
-                // let idx_zero = self.add_instruction_to_current_block(
-                //     function,
-                //     Operation::IntConst(0),
-                //     MIRType::Int,
-                // );
-
-                // get field idx
-                // let field_val = self.add_instruction_to_current_block(
-                //     function,
-                //     Operation::IntConst(field_idx),
-                //     MIRType::Int,
-                // );
-
-                self.add_instruction_to_current_block(
-                    function,
-                    Operation::GetElementPtr(record_value.id, vec![field_idx as i32]),
-                    MIRType::Ptr,
-                )
-
-                // self.add_instruction_to_current_block(
-                //     function,
-                //     Operation::Load(field_ptr),
-                //     self.convert_type(&expr.ty),
-                // )
-            }
-            ExpressionKind::RecordInit(record_type, assignments) => {
-                let record_mir_ty = program
-                    .types
-                    .get(record_type)
-                    .unwrap_or_else(|| panic!("unbound type {}", record_type));
-
-                let record_ptr = self.add_instruction_to_current_block(
-                    function,
-                    Operation::Alloca(record_mir_ty.clone()),
-                    MIRType::Ptr,
-                );
-
-                for (field_name, expr) in assignments {
-                    let field_value = self.lower_expression(program, function, expr);
+                for (field_name, field_expr) in assignments {
+                    let field_rvalue = self.lower_expression_rval(program, function, field_expr);
                     let field_idx = self
-                        .record_field_idx(program, record_type, field_name)
-                        .unwrap_or_else(|| {
-                            panic!("field {} not found in record {}", field_name, record_type)
-                        });
+                        .record_field_idx(program, record_type_name, field_name)
+                        .unwrap();
 
-                    let insert_val =
-                        Operation::InsertValue(record_ptr.id, field_value.id, field_idx);
-
-                    self.add_instruction_to_current_block(function, insert_val, MIRType::Unit);
+                    // todo: eliminate insertval and extract val
+                    let field_ptr = self.add_instruction_to_current_block(
+                        function,
+                        Operation::GetElementPtr(record_ptr_val.id, vec![field_idx as i32]),
+                        MIRType::Ptr,
+                    );
+                    self.add_instruction_to_current_block(
+                        function,
+                        Operation::Store(field_ptr.id, field_rvalue.id),
+                        MIRType::Unit,
+                    );
                 }
-
-                record_ptr
+                record_ptr_val
             }
-            ExpressionKind::Self_ => {
-                let self_ptr = function.symbols.get("self").unwrap_or_else(|| {
-                    panic!("self not found in function {}", function.name);
-                });
-
-                self_ptr.clone()
-            }
+            ExpressionKind::Self_ => function
+                .symbols
+                .get("self")
+                .expect("self not found")
+                .clone(),
             e => {
                 println!("need to handle expr: {:#?}", e);
 
                 todo!()
             }
+        }
+    }
+
+    // should always return a Value with MIRType::Ptr
+    fn lower_expression_lval(
+        &mut self,
+        program: &Program,
+        function: &mut Function,
+        expr: &TypedExpression,
+    ) -> Value {
+        match &expr.kind {
+            ExpressionKind::Ident(name) => {
+                let value_info = self
+                    .var_defs
+                    .get(name)
+                    .unwrap_or_else(|| panic!("Undefined variable: {}", name))
+                    .clone();
+                if !matches!(value_info.ty, MIRType::Ptr) {
+                    panic!(
+                        "Identifier '{}' is not a pointer, cannot be direct L-value for Store without Alloca",
+                        name
+                    );
+                }
+                value_info
+            }
+            ExpressionKind::FieldAccess(record_expr, field_name) => {
+                let record_ptr_value = self.lower_expression_rval(program, function, record_expr);
+
+                // todo: remove records and replace with ptrs
+                if !matches!(record_ptr_value.ty, MIRType::Ptr | MIRType::Record(_)) {
+                    panic!(
+                        "Base of field access must be a pointer. Got: {:?}",
+                        record_ptr_value.ty
+                    );
+                }
+
+                let field_idx = match &record_expr.ty {
+                    Type::UserDef(record_name_ast) => self
+                        .record_field_idx(program, record_name_ast, field_name)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Field {} not found in record {}",
+                                field_name, record_name_ast
+                            )
+                        }) as i32,
+                    Type::Record(ast_fields) => ast_fields
+                        .iter()
+                        .position(|(name, _)| name == field_name)
+                        .unwrap_or_else(|| {
+                            panic!("Field {} not found in anonymous record", field_name)
+                        }) as i32,
+                    _ => panic!("Field access on non-record type: {:?}", record_expr.ty),
+                };
+
+                self.add_instruction_to_current_block(
+                    function,
+                    Operation::GetElementPtr(record_ptr_value.id, vec![field_idx]),
+                    MIRType::Ptr,
+                )
+            }
+            ExpressionKind::Idx(array_expr, index_expr) => {
+                let array_ptr_value = self.lower_expression_rval(program, function, array_expr);
+                if !matches!(array_ptr_value.ty, MIRType::Ptr) {
+                    panic!(
+                        "Base of index access must be a pointer. Got: {:?}",
+                        array_ptr_value.ty
+                    );
+                }
+
+                let index_const = self.lower_expression_rval(program, function, index_expr);
+                let idx_val_for_gep = match function
+                    .blocks
+                    .get(&self.current_block.unwrap())
+                    .unwrap()
+                    .instructions
+                    .iter()
+                    .find(|(id, _)| *id == index_const.id)
+                {
+                    Some((_, Operation::IntConst(i))) => *i,
+                    Some((_, Operation::UsizeConst(u))) => *u as i32,
+                    _ => panic!(
+                        "Dynamic GEP index not yet fully supported in this example, expected const int/usize"
+                    ),
+                };
+
+                self.add_instruction_to_current_block(
+                    function,
+                    Operation::GetElementPtr(array_ptr_value.id, vec![idx_val_for_gep]),
+                    MIRType::Ptr,
+                )
+            }
+            _ => panic!(
+                "Expression kind {:?} cannot be an L-value to get an address from",
+                expr.kind
+            ),
         }
     }
 
@@ -977,7 +1004,7 @@ impl SSABuilder {
             }
             Type::Ptr(_) => MIRType::Ptr,
             Type::OpaquePtr => MIRType::Ptr,
-            _ => todo!(), // todo: handle other types
+            t => panic!("unhandled type: {}", t), // todo: handle other types
         }
     }
 }

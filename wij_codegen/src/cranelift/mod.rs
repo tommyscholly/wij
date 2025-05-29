@@ -175,6 +175,7 @@ impl CraneliftProgram {
                 .declare_function(fnname, linkage, &sig)
                 // todo: error handling
                 .unwrap();
+            println!("declared extern: {}:{} -> {}", fnname, fnid.0, func_id);
             self.pctx.fnid_to_funcid.insert(fnid.0, func_id);
         }
     }
