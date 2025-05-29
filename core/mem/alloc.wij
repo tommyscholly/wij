@@ -1,7 +1,7 @@
 module mem;
 
 foreign {
-    malloc: fn(size: usize) -> opaqueptr;
+    malloc: fn(size: int) -> opaqueptr;
     free: fn(ptr: opaqueptr);
 }
 
@@ -11,8 +11,8 @@ pub fn alloc(comptime T: type) -> *T {
     return cast;
 }
 
-pub fn alloc_buffer(comptime T: type, size: usize) -> *[T] {
+pub fn alloc_buffer(comptime T: type, size: int) -> *T {
     let allocation = malloc(size * @sizeOf(T));
-    let cast: *[T] = @cast(allocation);
+    let cast: *T = @cast(allocation);
     return cast;
 }

@@ -423,6 +423,11 @@ impl<'ctx> FunctionTranslator<'ctx> {
                         let var = self.pctx.declare_variable(val_id, &mut self.builder, I32);
                         self.builder.def_var(var, sub_val);
                     }
+                    BinOpKind::Mul => {
+                        let mul_val = self.builder.ins().imul(lhs_val, rhs_val);
+                        let var = self.pctx.declare_variable(val_id, &mut self.builder, I32);
+                        self.builder.def_var(var, mul_val);
+                    }
                     BinOpKind::Or => {
                         let or_val = self.builder.ins().bor(lhs_val, rhs_val);
                         let var = self.pctx.declare_variable(val_id, &mut self.builder, I8);

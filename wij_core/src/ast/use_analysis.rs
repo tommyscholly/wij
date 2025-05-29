@@ -34,7 +34,7 @@ pub fn files_in_module(module_path: &str) -> Result<Vec<PathBuf>> {
 }
 
 pub fn extract_module_uses(decls: &Vec<Spanned<Declaration>>) -> Vec<Path> {
-    let mut uses = vec![vec!["core".to_string(), "strings".to_string()]];
+    let mut uses = vec![];
     for decl in decls {
         #[allow(clippy::single_match)]
         match &decl.0.decl {

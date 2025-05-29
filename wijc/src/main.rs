@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
     process::{Command, exit},
@@ -70,7 +70,18 @@ fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl WijErro
 // and any dependent modules are appended
 pub type ResultingModules = Vec<Module>;
 
-fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
+fn compile_file(
+    file: &str,
+    options: &Options,
+    compiled: &mut HashSet<String>,
+) -> Option<ResultingModules> {
+    if options.debug {
+        println!("Compiling {file}");
+    }
+    if compiled.contains(file) {
+        return None;
+    }
+    compiled.insert(file.to_string());
     let src = std::fs::read_to_string(file).unwrap();
     let src = src.trim();
     let tokens = tokenize(src)
@@ -115,8 +126,9 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
 
         let module_files = use_analysis::files_in_module(&module_file_path);
         match module_files {
-            Ok(module_files) => {
-                let module = compile_module(module_name, module_files, options);
+            Ok(mut module_files) => {
+                module_files.reverse();
+                let module = compile_module(module_name, module_files, options, compiled);
                 // todo: avoid these clones
                 imports.extend(module.exports.clone());
                 comptime_fns.extend(module.comptime_fns.clone());
@@ -158,10 +170,18 @@ fn compile_file(file: &str, options: &Options) -> Option<ResultingModules> {
     Some(resulting_modules)
 }
 
-fn compile_module(module_name: String, module_files: Vec<PathBuf>, options: &Options) -> Module {
+fn compile_module(
+    module_name: String,
+    module_files: Vec<PathBuf>,
+    options: &Options,
+    compiled: &mut HashSet<String>,
+) -> Module {
     let mut module = Module::new(module_name);
     for file in module_files {
-        let file_mods = compile_file(file.to_str().unwrap(), options).unwrap();
+        let Some(file_mods) = compile_file(file.to_str().unwrap(), options, compiled) else {
+            continue;
+        };
+
         for file_mod in file_mods.into_iter() {
             module.combine(file_mod);
         }
@@ -173,7 +193,8 @@ fn compile_module(module_name: String, module_files: Vec<PathBuf>, options: &Opt
 fn main() {
     let options = Options::parse();
 
-    if let Some(modules) = compile_file(&options.file, &options) {
+    let mut compiled = HashSet::new();
+    if let Some(modules) = compile_file(&options.file, &options, &mut compiled) {
         let ssa_mod: Program = build_ssa(modules);
 
         if options.debug {

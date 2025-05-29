@@ -1,5 +1,9 @@
 module main;
 
+use core:fmt;
+use core:strings;
+
 fn main() {
-    let s = "Hello, world!";
+    let s = make_string("Hello, world!");
+    println(s);
 }

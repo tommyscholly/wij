@@ -1,13 +1,12 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    fmt::Display,
-    mem,
-};
-
 use crate::{
     WijError,
     ast::{self, Type},
     comptime,
+};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Display,
+    mem,
 };
 
 use super::{
@@ -279,8 +278,12 @@ pub struct Intrinsic {
 }
 
 impl Intrinsic {
-    fn resolve(self, instantiated_types: &HashMap<String, Type>) -> TypedExpression {
-        comptime::resolve_intrinsic(&self.name, self.args, instantiated_types)
+    fn resolve(
+        self,
+        instantiated_types: &HashMap<String, Type>,
+        ctx: &ScopedCtx,
+    ) -> TypedExpression {
+        comptime::resolve_intrinsic(&self.name, self.args, instantiated_types, ctx)
     }
 }
 
@@ -303,38 +306,42 @@ pub enum ExpressionKind {
 }
 
 impl ExpressionKind {
-    fn resolve(self, instantiated_types: &HashMap<String, Type>) -> ExpressionKind {
+    fn resolve(
+        self,
+        instantiated_types: &HashMap<String, Type>,
+        ctx: &ScopedCtx,
+    ) -> ExpressionKind {
         match self {
             Self::Array(elems) => {
                 let mut resolved_elems = Vec::new();
                 for elem in elems {
-                    resolved_elems.push(elem.resolve(instantiated_types));
+                    resolved_elems.push(elem.resolve(instantiated_types, ctx));
                 }
                 ExpressionKind::Array(resolved_elems)
             }
             Self::Idx(arr, idx) => ExpressionKind::Idx(
-                Box::new(arr.resolve(instantiated_types)),
-                Box::new(idx.resolve(instantiated_types)),
+                Box::new(arr.resolve(instantiated_types, ctx)),
+                Box::new(idx.resolve(instantiated_types, ctx)),
             ),
             Self::FieldAccess(expr, field) => {
-                ExpressionKind::FieldAccess(Box::new(expr.resolve(instantiated_types)), field)
+                ExpressionKind::FieldAccess(Box::new(expr.resolve(instantiated_types, ctx)), field)
             }
             Self::BinOp(op, lhs, rhs) => ExpressionKind::BinOp(
                 op,
-                Box::new(lhs.resolve(instantiated_types)),
-                Box::new(rhs.resolve(instantiated_types)),
+                Box::new(lhs.resolve(instantiated_types, ctx)),
+                Box::new(rhs.resolve(instantiated_types, ctx)),
             ),
             Self::FnCall(name, args) => ExpressionKind::FnCall(
                 name,
                 args.into_iter()
-                    .map(|arg| arg.resolve(instantiated_types))
+                    .map(|arg| arg.resolve(instantiated_types, ctx))
                     .collect(),
             ),
             Self::RecordInit(name, assignments) => ExpressionKind::RecordInit(
                 name,
                 assignments
                     .into_iter()
-                    .map(|(name, expr)| (name, expr.resolve(instantiated_types)))
+                    .map(|(name, expr)| (name, expr.resolve(instantiated_types, ctx)))
                     .collect(),
             ),
             // this is handled in typeexpression
@@ -353,15 +360,27 @@ pub struct TypedExpression {
 }
 
 impl TypedExpression {
-    pub fn resolve(self, instantiated_types: &HashMap<String, Type>) -> TypedExpression {
+    pub fn resolve(
+        self,
+        instantiated_types: &HashMap<String, Type>,
+        ctx: &ScopedCtx,
+    ) -> TypedExpression {
         if let ExpressionKind::Intrinsic(intrinsic) = self.kind {
-            return intrinsic.resolve(instantiated_types);
+            return intrinsic.resolve(instantiated_types, ctx);
         };
 
         TypedExpression {
-            kind: self.kind.resolve(instantiated_types),
+            kind: self.kind.resolve(instantiated_types, ctx),
             ty: self.ty,
             span: self.span,
+        }
+    }
+
+    // a helper function to see if an expression is a str literal
+    pub fn string(&self) -> Option<String> {
+        match &self.kind {
+            ExpressionKind::Literal(Literal::Str(s)) => Some(s.clone()),
+            _ => None,
         }
     }
 }
@@ -952,6 +971,7 @@ impl TypeChecker<'_> {
                 // TODO: cleanup these clones
                 let (val, inferred_ty) = if let Some(expr) = value {
                     let ty_expr = self.type_expr(ctx, expr)?;
+
                     let inferred_ty = ty_expr.ty.clone();
                     (Some(ty_expr), inferred_ty)
                 } else {
@@ -977,11 +997,13 @@ impl TypeChecker<'_> {
                     },
                 };
 
+                let stmt_kind = StatementKind::Let {
+                    var: ty_var,
+                    value: val,
+                };
+
                 TypedStatement {
-                    kind: StatementKind::Let {
-                        var: ty_var,
-                        value: val,
-                    },
+                    kind: stmt_kind,
                     ty: Type::Unit,
                     span: stmt.1,
                 }
@@ -1107,7 +1129,7 @@ impl TypeChecker<'_> {
             ));
         }
 
-        let body = self.type_stmt(&mut body_ctx, body)?;
+        let mut body = self.type_stmt(&mut body_ctx, body)?;
         let ret = match body.has_return() {
             Some(ty) => ty,
             None => {
@@ -1119,7 +1141,7 @@ impl TypeChecker<'_> {
             }
         };
 
-        if !(ret == Type::Unit) && ret_type.is_none() {
+        let resolved_ret = if !(ret == Type::Unit) && ret_type.is_none() {
             return Err(TypeError::new(
                 TypeErrorKind::TypeMismatch {
                     expected: Type::Unit,
@@ -1131,19 +1153,24 @@ impl TypeChecker<'_> {
             #[allow(clippy::single_match)]
             match ret_type.as_ref() {
                 Some(ret_type) => {
-                    if ret != *ret_type {
+                    let ret = ctx.resolve_type(ret);
+                    let ret_type = ctx.resolve_type(ret_type.clone());
+                    if ret != ret_type {
                         return Err(TypeError::new(
                             TypeErrorKind::TypeMismatch {
-                                expected: ret_type.clone(),
-                                found: ret.clone(),
+                                expected: ret_type,
+                                found: ret,
                             },
                             body.span,
                         ));
+                    } else {
+                        Some(ret_type)
                     }
                 }
-                None => (),
+                None => ret_type,
             }
-        }
+        };
+        println!("resolved ret {:?}", resolved_ret);
 
         let kind = if fn_is_comptime {
             DeclKind::ComptimeFunction {
@@ -1151,14 +1178,18 @@ impl TypeChecker<'_> {
                 comptime_args,
                 arguments: args,
                 body,
-                ret_type,
+                ret_type: resolved_ret,
             }
         } else {
+            for expr in body.expressions() {
+                *expr = expr.clone().resolve(&HashMap::new(), ctx);
+            }
+
             DeclKind::Function {
                 name: name.clone(),
                 arguments: args,
                 body,
-                ret_type,
+                ret_type: resolved_ret,
             }
         };
 
@@ -1171,6 +1202,7 @@ impl TypeChecker<'_> {
             span,
             visible: false,
         };
+
         if fn_is_comptime {
             self.comptime_fns.insert(name, ty_decl.clone());
         }
@@ -1193,7 +1225,7 @@ impl TypeChecker<'_> {
             }
             Expression::Self_ => {
                 let ty = match ctx.var_ty("self") {
-                    Some(ty) => ty.clone(),
+                    Some(ty) => ctx.resolve_type(ty.clone()),
                     None => {
                         return Err(TypeError::new(
                             TypeErrorKind::UndefinedVariable("self".to_string()),
@@ -1216,13 +1248,17 @@ impl TypeChecker<'_> {
                     ty_args.push(self.type_expr(ctx, arg)?);
                 }
 
-                TypedExpression {
-                    ty: comptime::intrinsic_type(&name),
-                    kind: ExpressionKind::Intrinsic(Intrinsic {
-                        name,
-                        args: ty_args,
-                    }),
-                    span: expr.1,
+                if !comptime::has_comptime_args(&name) {
+                    comptime::resolve_intrinsic(&name, ty_args, &HashMap::new(), ctx)
+                } else {
+                    TypedExpression {
+                        ty: comptime::intrinsic_type(&name),
+                        kind: ExpressionKind::Intrinsic(Intrinsic {
+                            name,
+                            args: ty_args,
+                        }),
+                        span: expr.1,
+                    }
                 }
             }
             Expression::MethodCall(structure, method_name, args) => {
@@ -1460,7 +1496,11 @@ impl TypeChecker<'_> {
                         instantiated_comptime_types.insert(arg_name.to_string(), arg_type);
                     }
 
-                    self.instantiate_comptime_fn(comptime_fn.clone(), instantiated_comptime_types)
+                    self.instantiate_comptime_fn(
+                        comptime_fn.clone(),
+                        instantiated_comptime_types,
+                        ctx,
+                    )
                 } else {
                     name
                 };
@@ -1588,6 +1628,7 @@ impl TypeChecker<'_> {
         &mut self,
         decl: TypedDecl,
         instantiated_type_args: HashMap<String, Type>,
+        ctx: &ScopedCtx,
     ) -> String {
         let decl_span = decl.span.clone();
         let DeclKind::ComptimeFunction {
@@ -1613,7 +1654,7 @@ impl TypeChecker<'_> {
         let exprs = body.expressions();
         for expr in exprs {
             // todo: remove this clone
-            *expr = expr.clone().resolve(&instantiated_type_args)
+            *expr = expr.clone().resolve(&instantiated_type_args, ctx);
         }
 
         let arguments: Vec<TypedVar> = arguments
@@ -1638,6 +1679,7 @@ impl TypeChecker<'_> {
             ret_type: ret_type.clone().unwrap_or(Type::Unit),
         }));
 
+        println!("comptime args: {arguments:?}");
         let concrete_decl = TypedDecl {
             ty: fn_ty.clone(),
             kind: DeclKind::Function {
@@ -1650,6 +1692,7 @@ impl TypeChecker<'_> {
             span: decl_span,
         };
 
+        // todo: get ride of this unsafe
         unsafe { self.top_ctx.as_mut().unwrap() }
             .insert_user_def_type(instantiated_name.clone(), fn_ty);
 

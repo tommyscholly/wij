@@ -1,0 +1,39 @@
+module strings;
+
+use core:mem;
+
+foreign {
+    strlen: fn(string: str) -> int;
+}
+
+pub type String = {
+    buffer: *byte,
+    length: int
+}
+
+procs String {
+    fn bytes() -> *byte {
+        return self.buffer;
+    }
+
+    fn len() -> int {
+        let len = self.length;
+        return len;
+    }
+}
+
+foreign {
+    // transmute: fn(src: 'a) -> 'b;
+    // strbytes: fn(string: str) -> *[byte];
+}
+
+pub fn make_string(string: str) -> String {
+    let length = strlen(string);
+    let buffer: *byte = alloc_buffer(byte, length);
+    let str_struct = String {
+        buffer = buffer,
+        length = length
+    };
+
+    return str_struct;
+}

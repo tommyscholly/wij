@@ -38,35 +38,6 @@ impl SizeOf for MIRType {
     }
 }
 
-fn convert_type(ty: &Type) -> MIRType {
-    match ty {
-        Type::Byte => MIRType::Byte,
-        Type::Int => MIRType::Int,
-        Type::Usize => MIRType::Usize,
-        Type::Bool => MIRType::Bool,
-        Type::Str => MIRType::Str,
-        Type::Unit => MIRType::Unit,
-        Type::Array(elem_ty) => MIRType::Array(Box::new(convert_type(elem_ty))),
-        Type::Record(fields) => MIRType::Record(
-            fields
-                .iter()
-                .map(|(name, ty)| (name.clone(), convert_type(ty)))
-                .collect(),
-        ),
-        Type::Fn(sig) => {
-            let param_types = sig.param_types.iter().map(convert_type).collect();
-            MIRType::Fn(param_types, Box::new(convert_type(&sig.ret_type)))
-        }
-        Type::UserDef(_name) => {
-            // todo: fix this by passing in the program
-            todo!()
-        }
-        Type::Ptr(_) => MIRType::Ptr,
-        Type::OpaquePtr => MIRType::Ptr,
-        _ => todo!(), // todo: handle other types
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct ValueID(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -329,7 +300,9 @@ impl SSABuilder {
             id: fn_id,
             name: name.to_string(),
             params: Vec::new(),
-            return_type: ret_type.as_ref().map(convert_type),
+            return_type: ret_type
+                .as_ref()
+                .map(|ty| self.convert_type(ty, &program.types)),
             entry_block,
             blocks: HashMap::new(),
             dominators: HashMap::new(),
@@ -348,7 +321,7 @@ impl SSABuilder {
         self.var_defs.clear();
 
         for (idx, arg) in arguments.iter().enumerate() {
-            let param_ty = convert_type(&arg.ty);
+            let param_ty = self.convert_type(&arg.ty, &program.types);
             function.params.push((arg.id.clone(), param_ty.clone()));
 
             let param_value = self.new_value(param_ty);
@@ -422,7 +395,7 @@ impl SSABuilder {
                     // optimial memory allocation
                     let alloc_value = self.add_instruction_to_current_block(
                         function,
-                        Operation::Alloca(convert_type(&var.ty)),
+                        Operation::Alloca(self.convert_type(&var.ty, &program.types)),
                         MIRType::Ptr,
                     );
 
@@ -652,7 +625,7 @@ impl SSABuilder {
                         lhs: lhs_value.id,
                         rhs: rhs_value.id,
                     },
-                    convert_type(&expr.ty),
+                    self.convert_type(&expr.ty, &program.types),
                 )
             }
 
@@ -664,8 +637,11 @@ impl SSABuilder {
                         if let MIRType::Ptr = &value.ty {
                             self.add_instruction_to_current_block(
                                 function,
-                                Operation::Load(value.id, convert_type(&arg.ty)),
-                                convert_type(&arg.ty),
+                                Operation::Load(
+                                    value.id,
+                                    self.convert_type(&arg.ty, &program.types),
+                                ),
+                                self.convert_type(&arg.ty, &program.types),
                             )
                             .id
                         } else {
@@ -691,16 +667,17 @@ impl SSABuilder {
                         function: *fn_id,
                         args: arg_values,
                     },
-                    convert_type(&expr.ty),
+                    self.convert_type(&expr.ty, &program.types),
                 )
             }
 
             ExpressionKind::Array(elements) => {
-                let elem_type = if let MIRType::Array(elem_ty) = convert_type(&expr.ty) {
-                    *elem_ty
-                } else {
-                    unreachable!();
-                };
+                let elem_type =
+                    if let MIRType::Array(elem_ty) = self.convert_type(&expr.ty, &program.types) {
+                        *elem_ty
+                    } else {
+                        unreachable!();
+                    };
 
                 let array_ptr = self.add_instruction_to_current_block(
                     function,
@@ -747,8 +724,8 @@ impl SSABuilder {
 
                 self.add_instruction_to_current_block(
                     function,
-                    Operation::Load(elem_ptr.id, convert_type(&expr.ty)),
-                    convert_type(&expr.ty),
+                    Operation::Load(elem_ptr.id, self.convert_type(&expr.ty, &program.types)),
+                    self.convert_type(&expr.ty, &program.types),
                 )
             }
 
@@ -770,7 +747,7 @@ impl SSABuilder {
                         unreachable!();
                     }
                 };
-                let field_type = match &record.ty {
+                let _field_type = match &record.ty {
                     Type::Record(fields) => {
                         &fields
                             .iter()
@@ -810,7 +787,7 @@ impl SSABuilder {
                 // self.add_instruction_to_current_block(
                 //     function,
                 //     Operation::Load(field_ptr),
-                //     convert_type(&expr.ty),
+                //     self.convert_type(&expr.ty),
                 // )
             }
             ExpressionKind::RecordInit(record_type, assignments) => {
@@ -883,8 +860,12 @@ impl SSABuilder {
     }
 
     fn register_external(&mut self, program: &mut Program, name: &str, sig: &FunctionSignature) {
-        let param_types = sig.param_types.iter().map(convert_type).collect();
-        let return_type = convert_type(&sig.ret_type);
+        let param_types = sig
+            .param_types
+            .iter()
+            .map(|ty| self.convert_type(ty, &program.types))
+            .collect();
+        let return_type = self.convert_type(&sig.ret_type, &program.types);
         // believe externals still need fn_ids
         let external_fn_id = FnID(self.next_fn_id);
         self.next_fn_id += 1;
@@ -921,7 +902,9 @@ impl SSABuilder {
                 DeclKind::Record { name, fields } => {
                     let mir_fields = fields
                         .iter()
-                        .map(|(field_name, ty)| (field_name.clone(), convert_type(ty)))
+                        .map(|(field_name, ty)| {
+                            (field_name.clone(), self.convert_type(ty, &program.types))
+                        })
                         .collect();
 
                     program
@@ -956,6 +939,46 @@ impl SSABuilder {
         let id = BlockID(self.next_block_id);
         self.next_block_id += 1;
         id
+    }
+
+    #[allow(clippy::only_used_in_recursion)]
+    fn convert_type(&self, ty: &Type, types: &HashMap<String, MIRType>) -> MIRType {
+        match ty {
+            Type::Byte => MIRType::Byte,
+            Type::Int => MIRType::Int,
+            Type::Usize => MIRType::Usize,
+            Type::Bool => MIRType::Bool,
+            Type::Str => MIRType::Str,
+            Type::Unit => MIRType::Unit,
+            Type::Array(elem_ty) => MIRType::Array(Box::new(self.convert_type(elem_ty, types))),
+            Type::Record(fields) => MIRType::Record(
+                fields
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), self.convert_type(ty, types)))
+                    .collect(),
+            ),
+            Type::Fn(sig) => {
+                let param_types = sig
+                    .param_types
+                    .iter()
+                    .map(|ty| self.convert_type(ty, types))
+                    .collect();
+                MIRType::Fn(
+                    param_types,
+                    Box::new(self.convert_type(&sig.ret_type, types)),
+                )
+            }
+            Type::UserDef(name) => {
+                if let Some(ty) = types.get(name) {
+                    ty.clone()
+                } else {
+                    panic!("unbound type {}", name)
+                }
+            }
+            Type::Ptr(_) => MIRType::Ptr,
+            Type::OpaquePtr => MIRType::Ptr,
+            _ => todo!(), // todo: handle other types
+        }
     }
 }
 

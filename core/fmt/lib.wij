@@ -1,10 +1,10 @@
 module fmt;
 
-// use core:strings;
+use core:strings;
 
 foreign {
-    write: fn(fd: int, data: *[byte], count: int) -> int;
-    read: fn(fd: int, data: *[byte], count: int) -> int;
+    write: fn(fd: int, data: *byte, count: int) -> int;
+    read: fn(fd: int, data: *byte, count: int) -> int;
     // magic fn im just gonna define for now
     write_int: fn(data: int);
 }
@@ -14,14 +14,15 @@ foreign {
 // }
 
 
-// pub fn println(msg: str) {
-//     write(1, msg.bytes(), msg.len());
-//     write(1, "\n".bytes(), 1);
-// }
-//
-// pub fn print(msg: str) {
-//     write(1, msg.bytes(), msg.len());
-// }
+pub fn println(msg: String) {
+    write(1, msg.bytes(), msg.len());
+    let n_byte: *byte = @cast("\n");
+    write(1, n_byte, 1);
+}
+
+pub fn print(msg: String) {
+    write(1, msg.bytes(), msg.len());
+}
 
 pub fn print_int(x: int) {
     write_int(x);
