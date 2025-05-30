@@ -3,12 +3,8 @@ module main;
 use core:fmt;
 use core:strings;
 
-foreign {
-    strlen: fn(string: str) -> int;
-}
 
 fn main() {
-    print_int(strlen("Hello, world!"));
     let s = make_string("Hello, world!");
     print(s);
 }

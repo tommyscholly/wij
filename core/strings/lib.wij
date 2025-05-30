@@ -4,6 +4,7 @@ use core:mem;
 
 foreign {
     strlen: fn(string: str) -> int;
+    memcpy: fn(dest: *byte, src: *byte, count: int);
 }
 
 pub type String = {
@@ -30,6 +31,8 @@ foreign {
 pub fn make_string(string: str) -> String {
     let length = strlen(string);
     let buffer: *byte = alloc_buffer(byte, length);
+    let bytestr: *byte = @cast(*byte, string);
+    memcpy(buffer, bytestr, length);
     let str_struct = String {
         buffer = buffer,
         length = length

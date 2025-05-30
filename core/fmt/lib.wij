@@ -24,8 +24,10 @@ pub fn println(msg: String) {
 }
 
 pub fn print(msg: String) {
+    let test: *byte = @cast(*byte, "test");
+    write(1, test, 4);
     let len = msg.length;
     print_int(len);
-    write(1, msg.bytes(), len);
+    write(1, msg.buffer, len);
 }
 
