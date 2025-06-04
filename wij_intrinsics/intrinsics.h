@@ -12,7 +12,8 @@ typedef struct {
     size_t len;
 } StringData;
 
-StringData *str_alloc(size_t len);
+StringData *make_string(const char *data, size_t len);
+void str_print(StringData *str);
 void str_free(StringData *str);
 
 // gc functions

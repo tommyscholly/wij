@@ -13,7 +13,7 @@ pub type String = {
 }
 
 procs String {
-    fn bytes() -> *byte {
+    fn buffer() -> *byte {
         return self.buffer;
     }
 
@@ -28,7 +28,7 @@ foreign {
     // strbytes: fn(string: str) -> *[byte];
 }
 
-pub fn make_string(string: str) -> String {
+pub fn make_string_(string: str) -> String {
     let length = strlen(string);
     let buffer: *byte = alloc_buffer(byte, length);
     let bytestr: *byte = @cast(*byte, string);

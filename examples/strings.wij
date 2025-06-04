@@ -1,10 +1,12 @@
 module main;
 
-use core:fmt;
-use core:strings;
+// use core:fmt;
 
+foreign {
+    print_string: fn(s: str);
+}
 
 fn main() {
-    let s = make_string("Hello, world!");
-    print(s);
+    let s = "Hello, world!";
+    print_string(s);
 }

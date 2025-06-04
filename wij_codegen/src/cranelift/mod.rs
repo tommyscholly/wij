@@ -364,7 +364,8 @@ impl<'ctx> FunctionTranslator<'ctx> {
                 let base_val = self.builder.use_var(base_var);
                 let mut ptr = base_val;
                 for idx in indices {
-                    let idx_val = self.builder.ins().iconst(I64, idx as i64);
+                    println!("idx: {idx}");
+                    let idx_val = self.builder.ins().iconst(I64, idx as i64 * 4);
                     ptr = self.builder.ins().iadd(ptr, idx_val);
                 }
 
@@ -397,10 +398,29 @@ impl<'ctx> FunctionTranslator<'ctx> {
                     .declare_data_in_func(string_id, self.builder.func);
 
                 let ptr = self.builder.ins().global_value(I64, str_ptr);
+                let str_len = self.builder.ins().iconst(I64, s.len() as i64);
 
-                let ty = MIRType::Ptr.to_type();
-                let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
-                self.builder.def_var(var, ptr);
+                let funcid = self
+                    .pctx
+                    .fnid_to_funcid
+                    .get(&999999)
+                    .unwrap_or_else(|| panic!("make_string not found"));
+
+                let func_ref = self.module.declare_func_in_func(*funcid, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr, str_len]);
+                let call_results = self.builder.inst_results(call);
+                if call_results.is_empty() {
+                    panic!("make_string returned no results");
+                }
+
+                let val = call_results[0];
+
+                // 999999 is make_string unique id
+                // let val = self.generate_call(FnID(999999), vec![ptr, str_len]);
+                let var =
+                    self.pctx
+                        .declare_variable(val_id, &mut self.builder, MIRType::Ptr.to_type());
+                self.builder.def_var(var, val);
             }
             BinOp { op, lhs, rhs } => {
                 let lhs_var = self.pctx.get_variable(lhs.0);

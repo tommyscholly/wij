@@ -1009,6 +1009,22 @@ impl SSABuilder {
     }
 }
 
+fn default_externals() -> HashMap<String, (FnID, FunctionType)> {
+    let mut externals = HashMap::new();
+    externals.insert(
+        "make_string".to_string(),
+        (
+            // todo: make this unique
+            FnID(999999),
+            FunctionType {
+                params: vec![MIRType::Ptr, MIRType::Usize],
+                return_type: Some(MIRType::Str),
+            },
+        ),
+    );
+    externals
+}
+
 pub fn build_ssa(mut modules: Vec<Module>) -> Program {
     let mut program = Program {
         name: "main".to_string(),
@@ -1023,5 +1039,7 @@ pub fn build_ssa(mut modules: Vec<Module>) -> Program {
     while let Some(typed_module) = modules.pop() {
         ssa_builder.build_module(typed_module, &mut program);
     }
+
+    program.externals.extend(default_externals());
     program
 }

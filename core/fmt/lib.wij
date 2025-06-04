@@ -18,7 +18,7 @@ pub fn print_int(x: int) {
 }
 
 pub fn println(msg: String) {
-    write(1, msg.bytes(), msg.len());
+    write(1, msg.buffer(), msg.len());
     let n_byte: *byte = @cast(*byte, "\n");
     write(1, n_byte, 1);
 }
@@ -28,6 +28,7 @@ pub fn print(msg: String) {
     write(1, test, 4);
     let len = msg.length;
     print_int(len);
-    write(1, msg.buffer, len);
+    let buff = msg.buffer;
+    write(1, buff, len);
 }
 
