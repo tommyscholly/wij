@@ -854,7 +854,6 @@ pub enum DeclKind {
     Module(String),
     ForeignDeclarations(Vec<Spanned<ForeignDeclaration>>),
     Use(Path),
-    Procedures(Type, Vec<Spanned<Function>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -970,32 +969,6 @@ impl Parseable for Declaration {
                 let decl = Declaration {
                     visibility: Visibility::Private,
                     decl: DeclKind::Use(path),
-                };
-                Ok((decl, span))
-            }
-            Some((Token::Keyword(Keyword::Procs), _)) => {
-                let _start_span = parser.expect_kw_kind(Keyword::Procs)?;
-                let (ty, ty_span) = Type::parse(parser)?;
-                let _lbrace = parser.expect_next(Token::LBrace)?;
-                let mut procs = vec![];
-                while parser.peek_next().is_some() {
-                    match parser.peek_next() {
-                        Some((Token::RBrace, _)) => break,
-                        Some((Token::Keyword(Keyword::Pub), _)) => {
-                            // todo: fix this, we are currently not handling access mods on procs
-                            let _ = parser.pop_next();
-                        }
-                        _ => {}
-                    }
-                    let fn_parse = Function::parse(parser)?;
-                    procs.push(fn_parse);
-                }
-                let _rbrace = parser.expect_next(Token::RBrace)?;
-                let span = ty_span.start.._rbrace.1.end;
-
-                let decl = Declaration {
-                    visibility: Visibility::Private,
-                    decl: DeclKind::Procedures(ty, procs),
                 };
                 Ok((decl, span))
             }

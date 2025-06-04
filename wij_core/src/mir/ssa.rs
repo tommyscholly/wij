@@ -233,22 +233,6 @@ impl SSABuilder {
 
         for decl in &typed_module.decls {
             match &decl.kind {
-                DeclKind::Procedures(_, fns) => {
-                    for fn_decl in fns {
-                        let DeclKind::Function {
-                            name,
-                            arguments,
-                            body,
-                            ret_type,
-                        } = &fn_decl.kind
-                        else {
-                            panic!("help")
-                        };
-
-                        println!("lowering procedure: {}", name);
-                        self.lower_function(program, name, arguments, body, ret_type.clone());
-                    }
-                }
                 DeclKind::Function {
                     name,
                     arguments,

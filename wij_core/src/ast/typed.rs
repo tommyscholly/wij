@@ -416,8 +416,6 @@ pub enum DeclKind {
         variants: Vec<EnumVariant>,
     },
     ForeignDeclarations(Vec<(String, FunctionSignature)>),
-    // We implement procedures on a type
-    Procedures(Type, Vec<TypedDecl>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -436,9 +434,6 @@ impl TypedDecl {
             DeclKind::Record { name, .. } => Some(name),
             DeclKind::Enum { name, .. } => Some(name),
             DeclKind::ForeignDeclarations(..) => None,
-            // todo: evaluate if we want to define procedures with the name idea in
-            // `register_types`
-            DeclKind::Procedures(..) => None,
         }
     }
 }
@@ -716,32 +711,6 @@ impl TypeChecker<'_> {
                     body,
                     ret_type,
                 }) => (name, arguments, body, ret_type),
-                ASTDeclKind::Procedures(type_name, fns) => {
-                    for fn_def in fns {
-                        let Function {
-                            name,
-                            arguments,
-                            num_comptime_args: _,
-                            body: _,
-                            ret_type,
-                        } = &fn_def.0;
-                        let mut param_types = vec![type_name.clone()];
-
-                        for (var, _) in arguments {
-                            param_types.push(var.ty.clone().unwrap());
-                        }
-
-                        let name = format!("{}::{}", type_name, name);
-                        let signature = FunctionSignature {
-                            param_types,
-                            ret_type: ret_type.clone().unwrap_or(Type::Unit),
-                        };
-
-                        println!("registered method fn {}: {}", name, signature);
-                        ctx.insert_user_def_type(name, Type::Fn(Box::new(signature)));
-                    }
-                    continue;
-                }
                 _ => continue,
             };
 
@@ -762,15 +731,6 @@ impl TypeChecker<'_> {
         for decl in imports {
             if let Some(name) = decl.name() {
                 ctx.insert_user_def_type(name.to_string(), decl.ty.clone());
-            }
-
-            if let DeclKind::Procedures(_, fns) = &decl.kind {
-                for proc_type_decl in fns {
-                    ctx.insert_user_def_type(
-                        proc_type_decl.name().unwrap().to_string(),
-                        proc_type_decl.ty.clone(),
-                    );
-                }
             }
         }
     }
@@ -807,22 +767,6 @@ impl TypeChecker<'_> {
         decl: Spanned<Declaration>,
     ) -> TypeResult<TypedDecl> {
         let decl = match decl.0.decl {
-            ASTDeclKind::Procedures(ty, procs) => {
-                let mut ty_procs = vec![];
-                for (mut proc_fn, span) in procs {
-                    // kind of a hack, changing the method name to be a function that just exists with
-                    // the name type::name
-                    proc_fn.name = format!("{}::{}", ty, proc_fn.name);
-                    let ty_fn = self.type_fn(ctx, proc_fn, span, Some(ty.clone()))?;
-                    ty_procs.push(ty_fn);
-                }
-                TypedDecl {
-                    ty: ty.clone(),
-                    kind: DeclKind::Procedures(ty, ty_procs),
-                    span: decl.1,
-                    visible: true,
-                }
-            }
             ASTDeclKind::Function(fn_def) => {
                 let mut fn_decl = self.type_fn(ctx, fn_def, decl.1, None)?;
                 fn_decl.visible = decl.0.visibility.to_bool();

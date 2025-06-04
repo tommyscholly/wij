@@ -78,8 +78,6 @@ pub enum Keyword {
     Bool,
     Byte,
 
-    Procs,
-
     Self_,
     Comptime,
 
@@ -114,7 +112,6 @@ impl TryFrom<&str> for Keyword {
             "return" => Ok(Keyword::Return),
             "break" => Ok(Keyword::Break),
             "continue" => Ok(Keyword::Continue),
-            "procs" => Ok(Keyword::Procs),
             "self" => Ok(Keyword::Self_),
             "comptime" => Ok(Keyword::Comptime),
             "opaqueptr" => Ok(Keyword::Opaqueptr),
