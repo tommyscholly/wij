@@ -673,6 +673,13 @@ impl TypeChecker<'_> {
     }
 
     fn register_types(&self, ctx: &mut ScopedCtx, imports: &Vec<TypedDecl>) {
+        let string_type = Type::Record(vec![
+            // TODO: figure out how to represent `*byte`
+            ("buffer".to_string(), Type::Ptr(Box::new(Type::Byte))),
+            ("length".to_string(), Type::Int),
+        ]);
+        ctx.insert_user_def_type("String".to_string(), string_type);
+
         let decls = &self.decls;
         for decl in decls {
             match &decl.0.decl {
@@ -1347,12 +1354,11 @@ impl TypeChecker<'_> {
                 }
             }
             Expression::Literal(lit) => TypedExpression {
-                ty: match lit {
+                ty: match &lit {
                     Literal::Int(_) => Type::Int,
                     Literal::Bool(_) => Type::Bool,
-                    Literal::Str(_) => Type::Str,
+                    Literal::Str(_) => Type::UserDef("String".to_string()),
                     Literal::Usize(_) => Type::Usize,
-                    // Literal::Byte(_) => Type::Byte,
                 },
                 kind: ExpressionKind::Literal(lit),
                 span: expr.1,

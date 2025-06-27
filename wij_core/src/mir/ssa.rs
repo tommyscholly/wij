@@ -496,7 +496,7 @@ impl SSABuilder {
                         // todo: fix these place holders
                         MIRType::Int // placeholder
                     } else {
-                        MIRType::Int // placeholder 
+                        MIRType::Int // placeholder
                     };
 
                     let phi_value = self.new_value(var_type.clone());
@@ -564,7 +564,7 @@ impl SSABuilder {
                 Literal::Str(val) => self.add_instruction_to_current_block(
                     function,
                     Operation::StrConst(val.clone()),
-                    MIRType::Str,
+                    MIRType::Ptr,
                 ),
             },
 
@@ -908,6 +908,14 @@ impl SSABuilder {
     }
 
     fn register_types(&mut self, program: &mut Program, typed_module: &Module) {
+        program.types.insert(
+            "String".to_string(),
+            MIRType::Record(vec![
+                ("buffer".to_string(), MIRType::Ptr),
+                ("length".to_string(), MIRType::Int),
+            ]),
+        );
+
         for decl in &typed_module.decls {
             match &decl.kind {
                 DeclKind::Record { name, fields } => {

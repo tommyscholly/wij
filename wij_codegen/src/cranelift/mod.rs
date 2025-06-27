@@ -110,7 +110,7 @@ impl CraneliftProgram {
         std::fs::write(&object_file, object.emit()?)?;
 
         std::process::Command::new("cc")
-            .arg("../wij_intrinsics/intrinsics.c")
+            // .arg("../wij_intrinsics/intrinsics.c")
             .arg(&object_file)
             .arg("-o")
             .arg(self.program_name)
@@ -363,14 +363,14 @@ impl<'ctx> FunctionTranslator<'ctx> {
                 let base_var = self.pctx.get_variable(base.0);
                 let base_val = self.builder.use_var(base_var);
                 let mut ptr = base_val;
+
                 for idx in indices {
                     println!("idx: {idx}");
-                    let idx_val = self.builder.ins().iconst(I64, idx as i64 * 4);
+                    let idx_val = self.builder.ins().iconst(I64, idx as i64 * 8);
                     ptr = self.builder.ins().iadd(ptr, idx_val);
                 }
 
                 let ty = MIRType::Ptr.to_type();
-                // let field_val = self.builder.ins().load(ty, MemFlags::new(), ptr, 0);
                 let var = self.pctx.declare_variable(val_id, &mut self.builder, ty);
                 self.builder.def_var(var, ptr);
             }
@@ -378,6 +378,7 @@ impl<'ctx> FunctionTranslator<'ctx> {
                 let lhs_var = self.pctx.get_variable(lhs.0);
                 let rhs_var = self.pctx.get_variable(rhs.0);
                 let rhs_val = self.builder.use_var(rhs_var);
+
                 self.builder.def_var(lhs_var, rhs_val);
             }
             StrConst(s) => {
@@ -397,30 +398,28 @@ impl<'ctx> FunctionTranslator<'ctx> {
                     .module
                     .declare_data_in_func(string_id, self.builder.func);
 
-                let ptr = self.builder.ins().global_value(I64, str_ptr);
-                let str_len = self.builder.ins().iconst(I64, s.len() as i64);
+                // Get pointer to the string data
+                let data_ptr = self.builder.ins().global_value(I64, str_ptr);
+                let str_len = self.builder.ins().iconst(I32, s.len() as i64);
 
-                let funcid = self
-                    .pctx
-                    .fnid_to_funcid
-                    .get(&999999)
-                    .unwrap_or_else(|| panic!("make_string not found"));
+                // Simple approach - create a struct with ptr + len
+                // Allocate space for a string struct (ptr=8 bytes + len=4 bytes + padding=4 bytes = 16 bytes)
+                let string_struct_size = 16u32;
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, string_struct_size, 8);
+                let string_slot = self.builder.create_sized_stack_slot(data);
+                let string_addr = self.builder.ins().stack_addr(I64, string_slot, 0);
 
-                let func_ref = self.module.declare_func_in_func(*funcid, self.builder.func);
-                let call = self.builder.ins().call(func_ref, &[ptr, str_len]);
-                let call_results = self.builder.inst_results(call);
-                if call_results.is_empty() {
-                    panic!("make_string returned no results");
-                }
+                // Store pointer at offset 0
+                self.builder
+                    .ins()
+                    .store(MemFlags::new(), data_ptr, string_addr, 0);
+                // Store length at offset 8 (as i32)
+                self.builder
+                    .ins()
+                    .store(MemFlags::new(), str_len, string_addr, 8);
 
-                let val = call_results[0];
-
-                // 999999 is make_string unique id
-                // let val = self.generate_call(FnID(999999), vec![ptr, str_len]);
-                let var =
-                    self.pctx
-                        .declare_variable(val_id, &mut self.builder, MIRType::Ptr.to_type());
-                self.builder.def_var(var, val);
+                let var = self.pctx.declare_variable(val_id, &mut self.builder, I64);
+                self.builder.def_var(var, string_addr);
             }
             BinOp { op, lhs, rhs } => {
                 let lhs_var = self.pctx.get_variable(lhs.0);

@@ -276,6 +276,56 @@ impl<T: Iterator<Item = LexItem>> Lexer<T> {
                                 self.current += 1;
                                 break;
                             }
+                            Some('\\') => {
+                                // Handle escape sequences
+                                self.chars.next();
+                                self.current += 1;
+                                match self.chars.peek() {
+                                    Some('n') => {
+                                        string.push('\n');
+                                        self.chars.next();
+                                        self.current += 1;
+                                    }
+                                    Some('t') => {
+                                        string.push('\t');
+                                        self.chars.next();
+                                        self.current += 1;
+                                    }
+                                    Some('r') => {
+                                        string.push('\r');
+                                        self.chars.next();
+                                        self.current += 1;
+                                    }
+                                    Some('\\') => {
+                                        string.push('\\');
+                                        self.chars.next();
+                                        self.current += 1;
+                                    }
+                                    Some('"') => {
+                                        string.push('"');
+                                        self.chars.next();
+                                        self.current += 1;
+                                    }
+                                    Some('0') => {
+                                        string.push('\0');
+                                        self.chars.next();
+                                        self.current += 1;
+                                    }
+                                    Some(c) => {
+                                        // For unsupported escape sequences, just include the backslash and character
+                                        string.push('\\');
+                                        string.push(*c);
+                                        self.chars.next();
+                                        self.current += 1;
+                                    }
+                                    None => {
+                                        return Err(LexError::new(
+                                            LexErrorKind::UnexpectedEOF,
+                                            self.current..self.current,
+                                        ));
+                                    }
+                                }
+                            }
                             Some(c) => {
                                 string.push(*c);
                                 self.chars.next();

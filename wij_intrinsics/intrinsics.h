@@ -13,13 +13,9 @@ typedef struct {
 } StringData;
 
 StringData *make_string(const char *data, size_t len);
-void str_print(StringData *str);
+StringData *int_to_string(int32_t x);
+void str_concat(StringData *a, StringData *b);
 void str_free(StringData *str);
-
-// gc functions
-typedef struct {
-    size_t gcbits;
-    void *data;
-} GcData;
+void print_str(StringData *str);
 
 #endif
