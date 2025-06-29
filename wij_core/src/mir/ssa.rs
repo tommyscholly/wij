@@ -564,7 +564,7 @@ impl SSABuilder {
                 Literal::Str(val) => self.add_instruction_to_current_block(
                     function,
                     Operation::StrConst(val.clone()),
-                    MIRType::Ptr,
+                    program.types.get("String").unwrap().clone(),
                 ),
             },
 
@@ -802,7 +802,7 @@ impl SSABuilder {
 
                 self.add_instruction_to_current_block(
                     function,
-                    Operation::GetElementPtr(record_ptr_value.id, vec![field_idx]),
+                    Operation::GetElementPtr(record_ptr_value.id, vec![0, field_idx]),
                     MIRType::Ptr,
                 )
             }
@@ -1001,22 +1001,6 @@ impl SSABuilder {
     }
 }
 
-fn default_externals() -> HashMap<String, (FnID, FunctionType)> {
-    let mut externals = HashMap::new();
-    externals.insert(
-        "make_string".to_string(),
-        (
-            // todo: make this unique
-            FnID(999999),
-            FunctionType {
-                params: vec![MIRType::Ptr, MIRType::Usize],
-                return_type: Some(MIRType::Str),
-            },
-        ),
-    );
-    externals
-}
-
 pub fn build_ssa(mut modules: Vec<Module>) -> Program {
     let mut program = Program {
         name: "main".to_string(),
@@ -1032,6 +1016,5 @@ pub fn build_ssa(mut modules: Vec<Module>) -> Program {
         ssa_builder.build_module(typed_module, &mut program);
     }
 
-    program.externals.extend(default_externals());
     program
 }

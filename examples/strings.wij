@@ -4,6 +4,6 @@ use core:fmt;
 
 fn main() -> int {
     let s = "Hello, world!";
-    println(s);
+    fmt:println(s);
     return 0;
 }

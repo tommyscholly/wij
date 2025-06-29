@@ -1420,94 +1420,94 @@ impl TypeChecker<'_> {
                     span: expr.1,
                 }
             }
-            Expression::FnCall(name, args) => {
-                let mut ty_args = VecDeque::new();
-                for arg in args {
-                    ty_args.push_back(self.type_expr(ctx, arg)?);
-                }
+            // Expression::FnCall(_, name, args) => {
+            //     let mut ty_args = VecDeque::new();
+            //     for arg in args {
+            //         ty_args.push_back(self.type_expr(ctx, arg)?);
+            //     }
 
-                let name = if let Some(comptime_fn) = self.comptime_fns.get(&name) {
-                    let _decl_ctx = unsafe { &mut *self.top_ctx };
-                    let mut instantiated_comptime_types = HashMap::new();
+            //     let name = if let Some(comptime_fn) = self.comptime_fns.get(&name) {
+            //         let _decl_ctx = unsafe { &mut *self.top_ctx };
+            //         let mut instantiated_comptime_types = HashMap::new();
 
-                    #[allow(unused)]
-                    let DeclKind::ComptimeFunction {
-                        name,
-                        comptime_args,
-                        arguments,
-                        body,
-                        ret_type,
-                    } = &comptime_fn.kind
-                    else {
-                        unreachable!()
-                    };
+            //         #[allow(unused)]
+            //         let DeclKind::ComptimeFunction {
+            //             name,
+            //             comptime_args,
+            //             arguments,
+            //             body,
+            //             ret_type,
+            //         } = &comptime_fn.kind
+            //         else {
+            //             unreachable!()
+            //         };
 
-                    for arg_name in comptime_args {
-                        let ty_arg = ty_args.pop_front().unwrap();
-                        let ExpressionKind::Type(arg_type) = ty_arg.kind else {
-                            panic!("comptime fn arg is not a type")
-                        };
-                        instantiated_comptime_types.insert(arg_name.to_string(), arg_type);
-                    }
+            //         for arg_name in comptime_args {
+            //             let ty_arg = ty_args.pop_front().unwrap();
+            //             let ExpressionKind::Type(arg_type) = ty_arg.kind else {
+            //                 panic!("comptime fn arg is not a type")
+            //             };
+            //             instantiated_comptime_types.insert(arg_name.to_string(), arg_type);
+            //         }
 
-                    self.instantiate_comptime_fn(
-                        comptime_fn.clone(),
-                        instantiated_comptime_types,
-                        ctx,
-                    )
-                } else {
-                    name
-                };
+            //         self.instantiate_comptime_fn(
+            //             comptime_fn.clone(),
+            //             instantiated_comptime_types,
+            //             ctx,
+            //         )
+            //     } else {
+            //         name
+            //     };
 
-                let fn_type = match ctx.get_user_def_type(&name) {
-                    None => {
-                        return Err(TypeError::new(
-                            TypeErrorKind::UndefinedFunction(name),
-                            expr.1,
-                        ));
-                    }
-                    Some(t) => t,
-                };
+            //     let fn_type = match ctx.get_user_def_type(&name) {
+            //         None => {
+            //             return Err(TypeError::new(
+            //                 TypeErrorKind::UndefinedFunction(name),
+            //                 expr.1,
+            //             ));
+            //         }
+            //         Some(t) => t,
+            //     };
 
-                let ret_ty = if let Type::Fn(fn_) = fn_type {
-                    let FunctionSignature {
-                        param_types,
-                        ret_type,
-                    } = *fn_;
+            //     let ret_ty = if let Type::Fn(fn_) = fn_type {
+            //         let FunctionSignature {
+            //             param_types,
+            //             ret_type,
+            //         } = *fn_;
 
-                    if param_types.len() != ty_args.len() {
-                        return Err(TypeError::new(
-                            TypeErrorKind::FunctionArityMismatch {
-                                expected: param_types.len() as u32,
-                                found: ty_args.len() as u32,
-                            },
-                            expr.1,
-                        ));
-                    }
+            //         if param_types.len() != ty_args.len() {
+            //             return Err(TypeError::new(
+            //                 TypeErrorKind::FunctionArityMismatch {
+            //                     expected: param_types.len() as u32,
+            //                     found: ty_args.len() as u32,
+            //                 },
+            //                 expr.1,
+            //             ));
+            //         }
 
-                    for (arg, ty_arg) in param_types.iter().zip(ty_args.iter()) {
-                        if arg != &ty_arg.ty {
-                            return Err(TypeError::new(
-                                TypeErrorKind::TypeMismatch {
-                                    expected: arg.clone(),
-                                    found: ty_arg.ty.clone(),
-                                },
-                                expr.1,
-                            ));
-                        }
-                    }
-                    ret_type
-                } else {
-                    return Err(TypeError::new(TypeErrorKind::IdentUsedAsFn(name), expr.1));
-                };
+            //         for (arg, ty_arg) in param_types.iter().zip(ty_args.iter()) {
+            //             if arg != &ty_arg.ty {
+            //                 return Err(TypeError::new(
+            //                     TypeErrorKind::TypeMismatch {
+            //                         expected: arg.clone(),
+            //                         found: ty_arg.ty.clone(),
+            //                     },
+            //                     expr.1,
+            //                 ));
+            //             }
+            //         }
+            //         ret_type
+            //     } else {
+            //         return Err(TypeError::new(TypeErrorKind::IdentUsedAsFn(name), expr.1));
+            //     };
 
-                TypedExpression {
-                    kind: ExpressionKind::FnCall(name, ty_args.into()),
-                    ty: ret_ty,
-                    span: expr.1,
-                }
-            }
-            Expression::QualifiedFnCall(module, name, args) => {
+            //     TypedExpression {
+            //         kind: ExpressionKind::FnCall(name, ty_args.into()),
+            //         ty: ret_ty,
+            //         span: expr.1,
+            //     }
+            // }
+            Expression::FnCall(module, name, args) => {
                 let mut ty_args = VecDeque::new();
                 for arg in args {
                     ty_args.push_back(self.type_expr(ctx, arg)?);
@@ -1515,7 +1515,11 @@ impl TypeChecker<'_> {
 
                 // For now, treat qualified calls as simple function lookups
                 // TODO: Implement proper module resolution
-                let qualified_name = format!("{}:{}", module, name);
+                let qualified_name = if module.is_empty() {
+                    name
+                } else {
+                    format!("{}:{}", module.join(":"), name)
+                };
 
                 let fn_type = match ctx.get_user_def_type(&qualified_name) {
                     None => {

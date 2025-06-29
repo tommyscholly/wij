@@ -110,7 +110,6 @@ impl CraneliftProgram {
         std::fs::write(&object_file, object.emit()?)?;
 
         std::process::Command::new("cc")
-            // .arg("../wij_intrinsics/intrinsics.c")
             .arg(&object_file)
             .arg("-o")
             .arg(self.program_name)

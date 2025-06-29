@@ -277,6 +277,7 @@ fn test_fn_call() {
                             ),
                             value: Some((
                                 Expression::FnCall(
+                                    vec![],
                                     "add".to_string(),
                                     vec![
                                         (Expression::Literal(Int(1)), 29..30),
@@ -320,6 +321,7 @@ fn test_fn_call_as_stmt() {
                     Statement::Block(vec![(
                         Statement::Expression(Box::new((
                             Expression::FnCall(
+                                vec![],
                                 "add".to_string(),
                                 vec![
                                     (Expression::Literal(Int(1)), 16..17),

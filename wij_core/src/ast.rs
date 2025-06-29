@@ -463,8 +463,7 @@ pub enum Expression {
     FieldAccess(Box<Spanned<Expression>>, String),
     MethodCall(Box<Spanned<Expression>>, String, Vec<Spanned<Expression>>),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
-    FnCall(String, Vec<Spanned<Expression>>),
-    QualifiedFnCall(String, String, Vec<Spanned<Expression>>), // module, function, args
+    FnCall(Vec<String>, String, Vec<Spanned<Expression>>), // module path, function name, arguments
     RecordInit(String, Vec<(String, Spanned<Expression>)>),
     DataConstruction(String, Option<Box<Spanned<Expression>>>),
     Idx(Box<Spanned<Expression>>, Box<Spanned<Expression>>),
@@ -541,10 +540,7 @@ fn parse_fn_call_args(parser: &mut Parser) -> ParseResult<Vec<Spanned<Expression
 
 impl Expression {
     fn is_fn_call(&self) -> bool {
-        matches!(
-            self,
-            Expression::FnCall(_, _) | Expression::QualifiedFnCall(_, _, _)
-        )
+        matches!(self, Expression::FnCall(_, _, _))
     }
 
     fn parse_primary(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
@@ -575,18 +571,22 @@ impl Expression {
             }
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
                 Some((Token::Colon, _)) => {
+                    let mut path = Vec::new();
                     // qualified function call: module:function(args)
-                    parser.pop_next(); // consume ':'
-                    let (func_name, _) = parser.expect_ident()?;
+                    while let Some((Token::Colon, _)) = parser.peek_next() {
+                        parser.pop_next(); // consume ':'
+                        let (module_name, _) = parser.expect_ident()?;
+                        path.push(module_name);
+                    }
+                    // last "module name" we would have pushed is the function name
+                    // because if we ran out of colons, we are at the end of the function
+                    let func_name = path.pop().unwrap();
                     parser.expect_next(Token::LParen)?; // consume '('
 
                     let args = parse_fn_call_args(parser)?;
                     let (_, rparen_span) = parser.expect_next(Token::RParen)?;
                     let full_span = span.start..rparen_span.end;
-                    (
-                        Expression::QualifiedFnCall(ident, func_name, args),
-                        full_span,
-                    )
+                    (Expression::FnCall(path, func_name, args), full_span)
                 }
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
@@ -594,12 +594,12 @@ impl Expression {
                     if let Some((Token::RParen, end_span)) = parser.peek_next() {
                         parser.pop_next();
                         let full_span = span.start..end_span.end;
-                        (Expression::FnCall(ident, vec![]), full_span)
+                        (Expression::FnCall(vec![], ident, vec![]), full_span)
                     } else {
                         let args = parse_fn_call_args(parser)?;
                         let (_, rparen_span) = parser.expect_next(Token::RParen)?;
                         let full_span = span.start..rparen_span.end;
-                        (Expression::FnCall(ident, args), full_span)
+                        (Expression::FnCall(vec![], ident, args), full_span)
                     }
                 }
                 Some((Token::LBrace, _)) => {
