@@ -1507,6 +1507,67 @@ impl TypeChecker<'_> {
                     span: expr.1,
                 }
             }
+            Expression::QualifiedFnCall(module, name, args) => {
+                let mut ty_args = VecDeque::new();
+                for arg in args {
+                    ty_args.push_back(self.type_expr(ctx, arg)?);
+                }
+
+                // For now, treat qualified calls as simple function lookups
+                // TODO: Implement proper module resolution
+                let qualified_name = format!("{}:{}", module, name);
+
+                let fn_type = match ctx.get_user_def_type(&qualified_name) {
+                    None => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::UndefinedFunction(qualified_name),
+                            expr.1,
+                        ));
+                    }
+                    Some(t) => t,
+                };
+
+                let ret_ty = if let Type::Fn(fn_) = fn_type {
+                    let FunctionSignature {
+                        param_types,
+                        ret_type,
+                    } = *fn_;
+
+                    if param_types.len() != ty_args.len() {
+                        return Err(TypeError::new(
+                            TypeErrorKind::FunctionArityMismatch {
+                                expected: param_types.len() as u32,
+                                found: ty_args.len() as u32,
+                            },
+                            expr.1,
+                        ));
+                    }
+
+                    for (arg, ty_arg) in param_types.iter().zip(ty_args.iter()) {
+                        if arg != &ty_arg.ty {
+                            return Err(TypeError::new(
+                                TypeErrorKind::TypeMismatch {
+                                    expected: arg.clone(),
+                                    found: ty_arg.ty.clone(),
+                                },
+                                expr.1,
+                            ));
+                        }
+                    }
+                    ret_type
+                } else {
+                    return Err(TypeError::new(
+                        TypeErrorKind::IdentUsedAsFn(qualified_name),
+                        expr.1,
+                    ));
+                };
+
+                TypedExpression {
+                    kind: ExpressionKind::FnCall(qualified_name, ty_args.into()),
+                    ty: ret_ty,
+                    span: expr.1,
+                }
+            }
             Expression::FieldAccess(expr, field_name) => {
                 let expr_span = expr.1.clone();
                 let ty_expr = self.type_expr(ctx, *expr)?;

@@ -18,6 +18,7 @@ fn test_parse_fn() {
             decl: DeclKind::Function(Function {
                 name: "main".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (Statement::Block(vec![]), 10..11),
                 ret_type: None,
             }),
@@ -50,6 +51,7 @@ fn test_parse_fn_with_params_and_body() {
                         Var {
                             name: "a".to_string(),
                             ty: Some(Type::Int),
+                            is_comptime: false,
                         },
                         8..14,
                     ),
@@ -57,6 +59,7 @@ fn test_parse_fn_with_params_and_body() {
                         Var {
                             name: "b".to_string(),
                             ty: Some(Type::Int),
+                            is_comptime: false,
                         },
                         16..22,
                     ),
@@ -68,6 +71,7 @@ fn test_parse_fn_with_params_and_body() {
                                 Var {
                                     name: "c".to_string(),
                                     ty: Some(Type::Int),
+                                    is_comptime: false,
                                 },
                                 42..48,
                             ),
@@ -77,6 +81,7 @@ fn test_parse_fn_with_params_and_body() {
                     )]),
                     24..52,
                 ),
+                num_comptime_args: 0,
                 ret_type: None,
             }),
         },
@@ -102,6 +107,7 @@ fn test_return_fn() {
             decl: DeclKind::Function(Function {
                 name: "main".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(
                         Statement::Return(Some((Expression::Literal(Int(1)), 18..19))),
@@ -135,6 +141,7 @@ fn test_if_else() {
             decl: DeclKind::Function(Function {
                 name: "main".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(
                         Statement::If {
@@ -219,6 +226,7 @@ fn test_type_record() {
                         Var {
                             name: "a".to_string(),
                             ty: Some(Type::Int),
+                            is_comptime: false,
                         },
                         14..20,
                     ),
@@ -226,6 +234,7 @@ fn test_type_record() {
                         Var {
                             name: "b".to_string(),
                             ty: Some(Type::Int),
+                            is_comptime: false,
                         },
                         22..28,
                     ),
@@ -254,6 +263,7 @@ fn test_fn_call() {
             decl: DeclKind::Function(Function {
                 name: "main".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(
                         Statement::Let {
@@ -261,6 +271,7 @@ fn test_fn_call() {
                                 Var {
                                     name: "a".to_string(),
                                     ty: Some(Type::Int),
+                                    is_comptime: false,
                                 },
                                 16..22,
                             ),
@@ -304,6 +315,7 @@ fn test_fn_call_as_stmt() {
             decl: DeclKind::Function(Function {
                 name: "main".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(
                         Statement::Expression(Box::new((
@@ -345,6 +357,7 @@ fn test_bin_op_precedence() {
             decl: DeclKind::Function(Function {
                 name: "main".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(
                         Statement::Return(Some((
@@ -419,6 +432,7 @@ fn test_bool_fn() {
             decl: DeclKind::Function(Function {
                 name: "test".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(
                         Statement::Return(Some((Expression::Literal(Bool(true)), 27..31))),
@@ -458,6 +472,7 @@ fn test_field_access() {
             decl: DeclKind::Function(Function {
                 name: "get_age".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(Statement::Return(Some(field_access)), 22..39)]),
                     20..39,
@@ -499,6 +514,7 @@ fn test_chained_field_access() {
             decl: DeclKind::Function(Function {
                 name: "get_city".to_string(),
                 arguments: vec![],
+                num_comptime_args: 0,
                 body: (
                     Statement::Block(vec![(Statement::Return(Some(city_access)), 23..47)]),
                     21..47,
@@ -511,4 +527,68 @@ fn test_chained_field_access() {
 
     assert_eq!(decls.len(), expected.len());
     assert_eq!(decls, expected);
+}
+
+#[test]
+fn test_parse_use_glob() {
+    let src = "use core:fmt;";
+    let lexer = tokenize(src);
+    let toks = lexer.map(Result::unwrap).collect();
+    let parser = Parser::new(toks);
+
+    let decls = parser
+        .map(Result::unwrap)
+        .collect::<Vec<Spanned<Declaration>>>();
+
+    assert_eq!(decls.len(), 1);
+    match &decls[0].0.decl {
+        DeclKind::Use(UseImport::Glob(path)) => {
+            assert_eq!(path, &vec!["core".to_string(), "fmt".to_string()]);
+        }
+        DeclKind::Use(import) => panic!("Expected UseImport::Glob, got {:?}", import),
+        _ => panic!("Expected UseImport::Glob"),
+    }
+}
+
+#[test]
+fn test_parse_use_specific() {
+    let src = "use core:fmt:println;";
+    let lexer = tokenize(src);
+    let toks = lexer.map(Result::unwrap).collect();
+    let parser = Parser::new(toks);
+
+    let decls = parser
+        .map(Result::unwrap)
+        .collect::<Vec<Spanned<Declaration>>>();
+
+    assert_eq!(decls.len(), 1);
+    match &decls[0].0.decl {
+        DeclKind::Use(UseImport::Specific(path, symbol)) => {
+            assert_eq!(path, &vec!["core".to_string(), "fmt".to_string()]);
+            assert_eq!(symbol, "println");
+        }
+        DeclKind::Use(import) => panic!("Expected UseImport::Specific, got {:?}", import),
+        _ => panic!("Expected UseImport::Specific"),
+    }
+}
+
+#[test]
+fn test_parse_use_multiple() {
+    let src = "use core:fmt:{println, print};";
+    let lexer = tokenize(src);
+    let toks = lexer.map(Result::unwrap).collect();
+    let parser = Parser::new(toks);
+
+    let decls = parser
+        .map(Result::unwrap)
+        .collect::<Vec<Spanned<Declaration>>>();
+
+    assert_eq!(decls.len(), 1);
+    match &decls[0].0.decl {
+        DeclKind::Use(UseImport::Multiple(path, symbols)) => {
+            assert_eq!(path, &vec!["core".to_string(), "fmt".to_string()]);
+            assert_eq!(symbols, &vec!["println".to_string(), "print".to_string()]);
+        }
+        _ => panic!("Expected UseImport::Multiple"),
+    }
 }

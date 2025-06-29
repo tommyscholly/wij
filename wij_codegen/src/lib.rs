@@ -1,12 +1,7 @@
 mod cranelift;
 mod llvm;
 
-use std::collections::HashMap;
-
-use wij_core::{
-    Program,
-    ssa::{FnID, FunctionType},
-};
+use wij_core::Program;
 
 pub enum Backend {
     Cranelift,

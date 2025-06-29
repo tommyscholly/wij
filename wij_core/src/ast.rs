@@ -464,6 +464,7 @@ pub enum Expression {
     MethodCall(Box<Spanned<Expression>>, String, Vec<Spanned<Expression>>),
     BinOp(BinOp, Box<Spanned<Expression>>, Box<Spanned<Expression>>),
     FnCall(String, Vec<Spanned<Expression>>),
+    QualifiedFnCall(String, String, Vec<Spanned<Expression>>), // module, function, args
     RecordInit(String, Vec<(String, Spanned<Expression>)>),
     DataConstruction(String, Option<Box<Spanned<Expression>>>),
     Idx(Box<Spanned<Expression>>, Box<Spanned<Expression>>),
@@ -540,7 +541,10 @@ fn parse_fn_call_args(parser: &mut Parser) -> ParseResult<Vec<Spanned<Expression
 
 impl Expression {
     fn is_fn_call(&self) -> bool {
-        matches!(self, Expression::FnCall(_, _))
+        matches!(
+            self,
+            Expression::FnCall(_, _) | Expression::QualifiedFnCall(_, _, _)
+        )
     }
 
     fn parse_primary(parser: &mut Parser) -> ParseResult<Spanned<Self>> {
@@ -570,6 +574,20 @@ impl Expression {
                 )
             }
             Some((Token::Identifier(ident), span)) => match parser.peek_next() {
+                Some((Token::Colon, _)) => {
+                    // qualified function call: module:function(args)
+                    parser.pop_next(); // consume ':'
+                    let (func_name, _) = parser.expect_ident()?;
+                    parser.expect_next(Token::LParen)?; // consume '('
+
+                    let args = parse_fn_call_args(parser)?;
+                    let (_, rparen_span) = parser.expect_next(Token::RParen)?;
+                    let full_span = span.start..rparen_span.end;
+                    (
+                        Expression::QualifiedFnCall(ident, func_name, args),
+                        full_span,
+                    )
+                }
                 Some((Token::LParen, _)) => {
                     parser.pop_next();
 
@@ -782,6 +800,16 @@ impl Parseable for ForeignDeclaration {
 pub type Path = Vec<String>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub enum UseImport {
+    /// `use core:fmt;` - imports all public symbols from module
+    Glob(Path),
+    /// `use core:fmt:println;` - imports specific symbol from module
+    Specific(Path, String),
+    /// `use core:fmt:{println, print};` - imports multiple symbols from module
+    Multiple(Path, Vec<String>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EnumVariant {
     pub name: String,
     pub data: Option<Spanned<Type>>,
@@ -853,7 +881,7 @@ pub enum DeclKind {
     },
     Module(String),
     ForeignDeclarations(Vec<Spanned<ForeignDeclaration>>),
-    Use(Path),
+    Use(UseImport),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -878,7 +906,7 @@ pub struct Declaration {
 }
 
 impl Declaration {
-    fn name(&self) -> Option<String> {
+    fn _name(&self) -> Option<String> {
         match &self.decl {
             DeclKind::Function(Function { name, .. }) => Some(name.clone()),
             DeclKind::Record { name, .. } => Some(name.clone()),
@@ -957,18 +985,71 @@ impl Parseable for Declaration {
             Some((Token::Keyword(Keyword::Use), use_span)) => {
                 let _use_span = parser.expect_kw_kind(Keyword::Use)?;
                 let (name, _) = parser.expect_ident()?;
-                let mut path = vec![name];
+                let mut segments = vec![name];
+
+                // parse all colon-separated segments first
                 while let Some((Token::Colon, _)) = parser.peek_next() {
-                    parser.pop_next();
-                    let (name, _) = parser.expect_ident()?;
-                    path.push(name);
+                    parser.pop_next(); // consume ':'
+
+                    // check what follows the colon
+                    match parser.peek_next() {
+                        Some((Token::LBrace, _)) => {
+                            // multiple imports
+                            // i.e. use module:path:{symbols}
+                            parser.pop_next(); // consume '{'
+                            let mut symbols = vec![];
+
+                            let (symbol, _) = parser.expect_ident()?;
+                            symbols.push(symbol);
+
+                            while let Some((Token::Comma, _)) = parser.peek_next() {
+                                parser.pop_next(); // consume ','
+                                let (symbol, _) = parser.expect_ident()?;
+                                symbols.push(symbol);
+                            }
+
+                            parser.expect_next(Token::RBrace)?; // consume '}'
+                            let (_, semi_span) = parser.expect_next(Token::SemiColon)?;
+                            let span = use_span.start..semi_span.end;
+                            let decl = Declaration {
+                                visibility: Visibility::Private,
+                                decl: DeclKind::Use(UseImport::Multiple(segments, symbols)),
+                            };
+                            return Ok((decl, span));
+                        }
+                        Some((Token::Identifier(_), _)) => {
+                            let (segment, _) = parser.expect_ident()?;
+                            segments.push(segment);
+                        }
+                        _ => break,
+                    }
                 }
+
+                // determine import type based on what we parsed
+                let import = match parser.peek_next() {
+                    Some((Token::SemiColon, _)) => {
+                        // check if this is specific or glob based on number of segments
+                        // we need to look at the context to decide
+                        // for now, let's check if the pattern suggests specific import
+                        // by seeing if there are more than 2 segments or if the last segment
+                        // looks like a function name (starts with lowercase)
+                        if segments.len() >= 3 {
+                            // use core:fmt:println; -> specific import
+                            let symbol = segments.pop().unwrap();
+                            UseImport::Specific(segments, symbol)
+                        } else {
+                            // use core:fmt; -> glob import
+                            UseImport::Glob(segments)
+                        }
+                    }
+                    _ => UseImport::Glob(segments),
+                };
+
                 let (_, semi_span) = parser.expect_next(Token::SemiColon)?;
                 let span = use_span.start..semi_span.end;
-
                 let decl = Declaration {
                     visibility: Visibility::Private,
-                    decl: DeclKind::Use(path),
+                    decl: DeclKind::Use(import),
                 };
                 Ok((decl, span))
             }

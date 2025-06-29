@@ -10,7 +10,8 @@ use clap::Parser as Clap;
 use rand::{Rng, rng};
 
 use wij_core::{
-    Graphviz, Module, Parser, Program, TypeChecker, WijError, build_ssa, tokenize, use_analysis,
+    Compiler, Graphviz, Module, Parser, Program, TypeChecker, WijError, build_ssa, tokenize,
+    use_analysis,
 };
 
 use wij_codegen::{Backend, CodegenOptions, codegen};
@@ -20,6 +21,8 @@ struct Options {
     file: String,
     #[clap(short, long, required = true)]
     core_path: String,
+    #[clap(long, short)]
+    use_discovery: bool,
     #[clap(short, long)]
     lex: bool,
     #[clap(short, long)]
@@ -28,6 +31,8 @@ struct Options {
     tychk: bool,
     #[clap(short, long)]
     debug: bool,
+    #[clap(short, long)]
+    graphviz: bool,
 }
 
 fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl WijError) {
@@ -69,6 +74,59 @@ fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl WijErro
 // This is a special type alias, where the directly compiled file is always first
 // and any dependent modules are appended
 pub type ResultingModules = Vec<Module>;
+
+fn compile_with_discovery(options: &Options) -> Option<ResultingModules> {
+    let file_path = PathBuf::from(&options.file);
+    if !file_path.exists() {
+        eprintln!("File not found: {}", file_path.display());
+        return None;
+    }
+    let base_path = file_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf();
+    let core_path = PathBuf::from(&options.core_path);
+
+    let mut compiler = Compiler::new(base_path, core_path);
+
+    // discover all modules starting from the file
+    if let Err(e) = compiler.discover_from_file(&file_path) {
+        eprintln!("Discovery error: {}", e.reason());
+        return None;
+    }
+
+    if options.debug {
+        println!("Discovered {} modules", compiler.modules().len());
+        for (name, info) in compiler.modules() {
+            println!("  - {}: {} files", name, info.files.len());
+        }
+    }
+
+    if options.debug {
+        let build_order = match compiler.resolve_build_order() {
+            Ok(order) => order,
+            Err(e) => {
+                eprintln!("Build order error: {}", e.reason());
+                return None;
+            }
+        };
+
+        println!("Build order: {}", build_order.join(" -> "));
+    }
+
+    match compiler.compile_modules() {
+        Ok(modules) => {
+            if options.debug {
+                println!("Compiled {} modules successfully", modules.len());
+            }
+            Some(modules)
+        }
+        Err(e) => {
+            eprintln!("Compilation error: {}", e.reason());
+            None
+        }
+    }
+}
 
 fn compile_file(
     file: &str,
@@ -193,12 +251,18 @@ fn compile_module(
 fn main() {
     let options = Options::parse();
 
-    let mut compiled = HashSet::new();
-    if let Some(modules) = compile_file(&options.file, &options, &mut compiled) {
+    let modules = if options.use_discovery {
+        compile_with_discovery(&options)
+    } else {
+        let mut compiled = HashSet::new();
+        compile_file(&options.file, &options, &mut compiled)
+    };
+
+    if let Some(modules) = modules {
         // println!("Modules: {:#?}", modules);
         let ssa_mod: Program = build_ssa(modules);
 
-        if options.debug {
+        if options.graphviz {
             let dot_content = ssa_mod.dot();
             let output_path = &ssa_mod.name;
             fs::write(format!("{}.dot", output_path), dot_content)
