@@ -6,7 +6,7 @@ use crate::{
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
-    mem,
+    mem, panic,
 };
 
 use super::{
@@ -436,6 +436,16 @@ impl TypedDecl {
             DeclKind::ForeignDeclarations(..) => None,
         }
     }
+
+    pub fn set_name(&mut self, name: String) {
+        match &mut self.kind {
+            DeclKind::Function { name: old_name, .. } => *old_name = name,
+            DeclKind::ComptimeFunction { name: old_name, .. } => *old_name = name,
+            DeclKind::Record { name: old_name, .. } => *old_name = name,
+            DeclKind::Enum { name: old_name, .. } => *old_name = name,
+            DeclKind::ForeignDeclarations(..) => {}
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -641,20 +651,15 @@ pub struct TypeChecker<'a> {
     module: Module,
     imports: Vec<TypedDecl>,
     ty_decls: Vec<TypedDecl>,
-    // comptime fns map the uninst name to the typed decl, which is of type ComptimeFunction
-    pub comptime_fns: HashMap<String, TypedDecl>,
-    // monomorphic fns map the instantiated name to the typed decl, which is of type Function
-    pub monomorphic_fns: HashMap<String, TypedDecl>,
+    // // comptime fns map the uninst name to the typed decl, which is of type ComptimeFunction
+    // pub comptime_fns: HashMap<String, TypedDecl>,
+    // // monomorphic fns map the instantiated name to the typed decl, which is of type Function
+    // pub monomorphic_fns: HashMap<String, TypedDecl>,
     top_ctx: *mut ScopedCtx<'a>,
 }
 
 impl TypeChecker<'_> {
-    pub fn new(
-        decls: Vec<Spanned<Declaration>>,
-        imports: Vec<TypedDecl>,
-        comptime_fns: HashMap<String, TypedDecl>,
-        monomorphic_fns: HashMap<String, TypedDecl>,
-    ) -> TypeResult<Self> {
+    pub fn new(decls: Vec<Spanned<Declaration>>, imports: Vec<TypedDecl>) -> TypeResult<Self> {
         let (module, decls) = extract_module(decls)?;
 
         let ctx = TyCtx::new();
@@ -664,8 +669,6 @@ impl TypeChecker<'_> {
             decls,
             imports,
             ty_decls: vec![],
-            monomorphic_fns,
-            comptime_fns,
             top_ctx: Box::into_raw(Box::new(scoped_ctx)),
         };
 
@@ -753,8 +756,9 @@ impl TypeChecker<'_> {
                 exports.push(ty_decl.clone());
             }
             if matches!(ty_decl.kind, DeclKind::ComptimeFunction { .. }) {
-                self.comptime_fns
-                    .insert(ty_decl.name().unwrap().to_string(), ty_decl.clone());
+                panic!("comptime functions not supported");
+                // self.comptime_fns
+                //     .insert(ty_decl.name().unwrap().to_string(), ty_decl.clone());
             } else {
                 self.ty_decls.push(ty_decl);
             }
@@ -762,8 +766,8 @@ impl TypeChecker<'_> {
 
         self.module.decls = self.ty_decls;
         self.module.exports = exports;
-        self.module.comptime_fns = self.comptime_fns;
-        self.module.monomorphic_fns = self.monomorphic_fns;
+        // self.module.comptime_fns = self.comptime_fns;
+        // self.module.monomorphic_fns = self.monomorphic_fns;
 
         Ok(self.module)
     }
@@ -1159,7 +1163,8 @@ impl TypeChecker<'_> {
         };
 
         if fn_is_comptime {
-            self.comptime_fns.insert(name, ty_decl.clone());
+            panic!("comptime functions not supported");
+            // self.comptime_fns.insert(name, ty_decl.clone());
         }
         Ok(ty_decl)
     }
@@ -1643,6 +1648,8 @@ impl TypeChecker<'_> {
     // this either instantiates a comptime fn if it hasn't already been, otherwise it just returns
     // the already instantiated comptime fn name. this does NOT return the typedecl, it just
     // inserts it into the decls
+    #[allow(dead_code)]
+
     fn instantiate_comptime_fn(
         &mut self,
         decl: TypedDecl,
@@ -1666,9 +1673,9 @@ impl TypeChecker<'_> {
             instantiated_name.push_str(&format!("_{arg_type}"));
         }
 
-        if self.monomorphic_fns.contains_key(&instantiated_name) {
-            return instantiated_name;
-        }
+        // if self.monomorphic_fns.contains_key(&instantiated_name) {
+        //     return instantiated_name;
+        // }
 
         let exprs = body.expressions();
         for expr in exprs {
@@ -1715,8 +1722,8 @@ impl TypeChecker<'_> {
         unsafe { self.top_ctx.as_mut().unwrap() }
             .insert_user_def_type(instantiated_name.clone(), fn_ty);
 
-        self.monomorphic_fns
-            .insert(instantiated_name.clone(), concrete_decl.clone());
+        // self.monomorphic_fns
+        //     .insert(instantiated_name.clone(), concrete_decl.clone());
         self.ty_decls.push(concrete_decl);
         instantiated_name
     }

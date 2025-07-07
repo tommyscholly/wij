@@ -1,18 +1,15 @@
-mod ast;
-mod compiler;
+pub mod ast;
+pub mod compiler;
 mod comptime;
 mod lex;
 mod mir;
 
 pub use ast::{
-    ParseError, Parser,
-    typed::{DeclKind, Module, ScopedCtx, TypeChecker},
+    Import, ParseError, Parser,
+    typed::{DeclKind, Module, ScopedCtx, TypeChecker, TypedDecl},
     use_analysis,
 };
-pub use compiler::{
-    Compiler, CompilerError, CompilerErrorKind, CompilerResult, ExportedSymbol, Import, ModuleInfo,
-    SymbolKind,
-};
+pub use compiler::{Compiler, CompilerError, CompilerResult, ModuleInfo};
 pub use lex::tokenize;
 pub use mir::ssa::{self, Program, build_ssa};
 

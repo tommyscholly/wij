@@ -240,8 +240,14 @@ impl SSABuilder {
                     ret_type,
                 } => {
                     println!("lowering fn: {}", name);
-                    let fn_id =
-                        self.lower_function(program, name, arguments, body, ret_type.clone());
+                    let fn_id = self.lower_function(
+                        program,
+                        &typed_module.name,
+                        name,
+                        arguments,
+                        body,
+                        ret_type.clone(),
+                    );
 
                     // todo: fix this to look for main as the entry function
                     if program.entry_function.is_none() {
@@ -270,6 +276,7 @@ impl SSABuilder {
     fn lower_function(
         &mut self,
         program: &mut Program,
+        module_name: &str,
         name: &str,
         arguments: &[TypedVar],
         body: &TypedStatement,
@@ -280,9 +287,16 @@ impl SSABuilder {
 
         let entry_block = self.new_block();
 
+        // todo: maybe move this to the codegen and have a wrapped main call main:main
+        let fn_name = if module_name == "main" {
+            name.to_string()
+        } else {
+            format!("{}:{}", module_name, name)
+        };
+
         let mut function = Function {
             id: fn_id,
-            name: name.to_string(),
+            name: fn_name.clone(),
             params: Vec::new(),
             return_type: ret_type
                 .as_ref()
@@ -317,7 +331,7 @@ impl SSABuilder {
             self.var_defs.insert(arg.id.clone(), param_value);
         }
 
-        program.fns_by_name.insert(name.to_string(), fn_id);
+        program.fns_by_name.insert(fn_name.clone(), fn_id);
         function.blocks.insert(entry_block, entry);
         self.create_new_block(&mut function);
         self.lower_statement(program, &mut function, body);

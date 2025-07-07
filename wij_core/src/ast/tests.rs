@@ -544,7 +544,7 @@ fn test_parse_use_glob() {
 
     assert_eq!(decls.len(), 1);
     match &decls[0].0.decl {
-        DeclKind::Use(UseImport::Glob(path)) => {
+        DeclKind::Use(Import::Module(path)) => {
             assert_eq!(path, &vec!["core".to_string(), "fmt".to_string()]);
         }
         DeclKind::Use(import) => panic!("Expected UseImport::Glob, got {:?}", import),
@@ -565,7 +565,7 @@ fn test_parse_use_specific() {
 
     assert_eq!(decls.len(), 1);
     match &decls[0].0.decl {
-        DeclKind::Use(UseImport::Specific(path, symbol)) => {
+        DeclKind::Use(Import::Specific(path, symbol)) => {
             assert_eq!(path, &vec!["core".to_string(), "fmt".to_string()]);
             assert_eq!(symbol, "println");
         }
@@ -587,7 +587,7 @@ fn test_parse_use_multiple() {
 
     assert_eq!(decls.len(), 1);
     match &decls[0].0.decl {
-        DeclKind::Use(UseImport::Multiple(path, symbols)) => {
+        DeclKind::Use(Import::Multiple(path, symbols)) => {
             assert_eq!(path, &vec!["core".to_string(), "fmt".to_string()]);
             assert_eq!(symbols, &vec!["println".to_string(), "print".to_string()]);
         }

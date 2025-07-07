@@ -364,7 +364,6 @@ impl<'ctx> FunctionTranslator<'ctx> {
                 let mut ptr = base_val;
 
                 for idx in indices {
-                    println!("idx: {idx}");
                     let idx_val = self.builder.ins().iconst(I64, idx as i64 * 8);
                     ptr = self.builder.ins().iadd(ptr, idx_val);
                 }

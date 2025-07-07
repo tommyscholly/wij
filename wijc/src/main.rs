@@ -9,20 +9,17 @@ use ariadne::{ColorGenerator, Label, Report, ReportKind, Source};
 use clap::Parser as Clap;
 use rand::{Rng, rng};
 
-use wij_core::{
-    Compiler, Graphviz, Module, Parser, Program, TypeChecker, WijError, build_ssa, tokenize,
-    use_analysis,
-};
-
 use wij_codegen::{Backend, CodegenOptions, codegen};
+use wij_core::{
+    Compiler, DeclKind, Graphviz, Module, Parser, Program, TypeChecker, WijError, build_ssa,
+    tokenize, use_analysis,
+};
 
 #[derive(Clap)]
 struct Options {
     file: String,
     #[clap(short, long, required = true)]
     core_path: String,
-    #[clap(long, short)]
-    use_discovery: bool,
     #[clap(short, long)]
     lex: bool,
     #[clap(short, long)]
@@ -71,7 +68,7 @@ fn report_error(file: &str, contents: &str, top_level_msg: &str, e: impl WijErro
         .unwrap();
 }
 
-// This is a special type alias, where the directly compiled file is always first
+// this is a special type alias, where the directly compiled file is always first
 // and any dependent modules are appended
 pub type ResultingModules = Vec<Module>;
 
@@ -81,67 +78,130 @@ fn compile_with_discovery(options: &Options) -> Option<ResultingModules> {
         eprintln!("File not found: {}", file_path.display());
         return None;
     }
-    let base_path = file_path
+
+    let directory = file_path
         .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .to_path_buf();
+        .unwrap_or_else(|| std::path::Path::new("."));
     let core_path = PathBuf::from(&options.core_path);
 
-    let mut compiler = Compiler::new(base_path, core_path);
+    let mut compiler = Compiler::new();
 
-    // discover all modules starting from the file
-    if let Err(e) = compiler.discover_from_file(&file_path) {
-        eprintln!("Discovery error: {}", e.reason());
+    let root_module = match compiler.discover_from_directory(directory, &core_path) {
+        Ok(module) => module,
+        Err(e) => {
+            eprintln!("Discovery error: {}", e.reason());
+            return None;
+        }
+    };
+
+    if options.debug {
+        let all_modules = root_module.all_modules();
+        println!("Discovered {} modules", all_modules.len());
+        println!("Module tree:");
+        println!("{}", compiler.get_module_summary(&root_module));
+    }
+
+    if compiler.has_circular_dependencies() {
+        eprintln!("Circular dependencies detected!");
         return None;
     }
 
-    if options.debug {
-        println!("Discovered {} modules", compiler.modules().len());
-        for (name, info) in compiler.modules() {
-            println!("  - {}: {} files", name, info.files.len());
+    let module_order = match compiler.get_compilation_order(&root_module) {
+        Ok(order) => order,
+        Err(e) => {
+            eprintln!("Failed to determine compilation order: {}", e.reason());
+            return None;
         }
-    }
+    };
 
     if options.debug {
-        let build_order = match compiler.resolve_build_order() {
-            Ok(order) => order,
-            Err(e) => {
-                eprintln!("Build order error: {}", e.reason());
+        println!(
+            "Compilation order: {:?}",
+            module_order.iter().map(|m| &m.name).collect::<Vec<_>>()
+        );
+    }
+
+    // compile modules in dependency order
+    let mut compiled_modules = Vec::new();
+    let mut compiled_set = HashSet::new();
+    let mut compiled_modules_map = HashMap::new();
+
+    for discovered_module in module_order {
+        if options.debug {
+            println!("Compiling module: {}", discovered_module.name);
+        }
+
+        let mut combined_module = Module::new(discovered_module.name.clone());
+
+        // compile all files in this module
+        // todo: only compile files that are used within the module
+        for file_path in &discovered_module.files {
+            if let Some(file_modules) = compile_file(
+                file_path.to_str().unwrap(),
+                options,
+                &mut compiled_set,
+                &compiled_modules_map,
+            ) {
+                for file_module in file_modules {
+                    combined_module.combine(file_module);
+                }
+            } else {
+                eprintln!("Failed to compile file: {}", file_path.display());
                 return None;
             }
+        }
+
+        // store compiled module for subsequent modules
+        // check if this is a core module and adjust the key accordingly
+        let storage_key = if discovered_module
+            .files
+            .iter()
+            .any(|f| f.starts_with(&options.core_path))
+        {
+            format!("core:{}", discovered_module.name)
+        } else {
+            discovered_module.name.clone()
         };
 
-        println!("Build order: {}", build_order.join(" -> "));
+        if options.debug {
+            println!("Storing compiled module with key: {}", storage_key);
+            println!("  Module has {} exports", combined_module.exports.len());
+        }
+
+        compiled_modules_map.insert(storage_key, combined_module.clone());
+        compiled_modules.push(combined_module);
     }
 
-    match compiler.compile_modules() {
-        Ok(modules) => {
-            if options.debug {
-                println!("Compiled {} modules successfully", modules.len());
-            }
-            Some(modules)
-        }
-        Err(e) => {
-            eprintln!("Compilation error: {}", e.reason());
-            None
-        }
+    if options.debug {
+        println!("Compiled {} modules successfully", compiled_modules.len());
     }
+
+    Some(compiled_modules)
 }
 
 fn compile_file(
     file: &str,
     options: &Options,
     compiled: &mut HashSet<String>,
-) -> Option<ResultingModules> {
+    compiled_modules: &HashMap<String, Module>,
+) -> Option<Vec<Module>> {
     if options.debug {
-        println!("Compiling {file}");
+        println!("Compiling file: {}", file);
     }
     if compiled.contains(file) {
         return None;
     }
     compiled.insert(file.to_string());
-    let src = std::fs::read_to_string(file).unwrap();
+
+    let src = match std::fs::read_to_string(file) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Failed to read file {}: {}", file, e);
+            return None;
+        }
+    };
     let src = src.trim();
+
     let tokens = tokenize(src)
         .map(|t| match t {
             Ok(t) => t,
@@ -151,10 +211,12 @@ fn compile_file(
             }
         })
         .collect();
+
     if options.lex {
         println!("{:#?}", tokens);
         return None;
     }
+
     let parser = Parser::new(tokens);
     let mut prog = Vec::new();
     for decl in parser {
@@ -166,41 +228,67 @@ fn compile_file(
             }
         }
     }
+
     if options.parse {
         println!("{:#?}", prog);
         return None;
     }
 
     let module_uses = use_analysis::extract_module_uses(&prog);
-    let mut additional_modules = Vec::new();
     let mut imports = Vec::new();
-    let mut comptime_fns = HashMap::new();
-    let mut monomorphic_fns = HashMap::new();
+
+    if options.debug {
+        println!(
+            "Available compiled modules: {:?}",
+            compiled_modules.keys().collect::<Vec<_>>()
+        );
+        println!("Required module imports: {:?}", module_uses);
+    }
 
     for module_import in module_uses {
         let module_name = module_import.join(":");
-        let module_file_path =
-            use_analysis::resolve_file_from_path(file, &options.core_path, module_import);
+        // use the last segment of the module path as the namespace prefix
+        let namespace_prefix = module_import.last().unwrap_or(&module_name);
 
-        let module_files = use_analysis::files_in_module(&module_file_path);
-        match module_files {
-            Ok(mut module_files) => {
-                module_files.reverse();
-                let module = compile_module(module_name, module_files, options, compiled);
-                // todo: avoid these clones
-                imports.extend(module.exports.clone());
-                comptime_fns.extend(module.comptime_fns.clone());
-                monomorphic_fns.extend(module.monomorphic_fns.clone());
+        if options.debug {
+            println!("Looking for module: {}", module_name);
+            println!("Using namespace prefix: {}", namespace_prefix);
+        }
 
-                additional_modules.push(module);
+        if let Some(compiled_module) = compiled_modules.get(&module_name) {
+            if options.debug {
+                println!(
+                    "Found module {} with {} exports",
+                    module_name,
+                    compiled_module.exports.len()
+                );
+                println!("  Exports:");
+                for export in &compiled_module.exports {
+                    println!("    - {:?}", export);
+                }
             }
-            Err(e) => {
-                panic!("Error loading module {module_name}: {e}");
+
+            // creating namespaced imports for qualified function calls
+            for export in &compiled_module.exports {
+                let mut namespaced_export = export.clone();
+                if let DeclKind::Function { name, .. } = &mut namespaced_export.kind {
+                    *name = format!("{}:{}", namespace_prefix, name);
+                }
+                imports.push(namespaced_export);
             }
+        } else {
+            eprintln!("Module {} not found in compiled modules", module_name);
+            if options.debug {
+                eprintln!(
+                    "Available modules: {:?}",
+                    compiled_modules.keys().collect::<Vec<_>>()
+                );
+            }
+            return None;
         }
     }
 
-    let type_checker = match TypeChecker::new(prog, imports, comptime_fns, monomorphic_fns) {
+    let type_checker = match TypeChecker::new(prog, imports) {
         Ok(type_checker) => type_checker,
         Err(e) => {
             report_error(file, src, "Type Error", e);
@@ -222,44 +310,17 @@ fn compile_file(
         return None;
     }
 
-    let mut resulting_modules = vec![module];
-    resulting_modules.append(&mut additional_modules);
-
-    Some(resulting_modules)
-}
-
-fn compile_module(
-    module_name: String,
-    module_files: Vec<PathBuf>,
-    options: &Options,
-    compiled: &mut HashSet<String>,
-) -> Module {
-    let mut module = Module::new(module_name);
-    for file in module_files {
-        let Some(file_mods) = compile_file(file.to_str().unwrap(), options, compiled) else {
-            continue;
-        };
-
-        for file_mod in file_mods.into_iter() {
-            module.combine(file_mod);
-        }
-    }
-
-    module
+    Some(vec![module])
 }
 
 fn main() {
     let options = Options::parse();
 
-    let modules = if options.use_discovery {
-        compile_with_discovery(&options)
-    } else {
-        let mut compiled = HashSet::new();
-        compile_file(&options.file, &options, &mut compiled)
-    };
+    let modules = compile_with_discovery(&options);
 
-    if let Some(modules) = modules {
+    if let Some(mut modules) = modules {
         // println!("Modules: {:#?}", modules);
+        modules.reverse();
         let ssa_mod: Program = build_ssa(modules);
 
         if options.graphviz {
