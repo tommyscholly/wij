@@ -1,0 +1,17 @@
+module main;
+
+use core:fmt;
+use utils;
+// use utils:multiply;
+
+fn main() {
+    let x = 42;
+    let y = utils:add(x, 10);
+    // let z = multiply(x, y);
+    fmt:println("Hello, World!");
+    fmt:println("Result:");
+}
+
+fn helper() -> int {
+    return 123;
+}
