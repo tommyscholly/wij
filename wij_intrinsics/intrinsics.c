@@ -6,9 +6,10 @@
 #include <unistd.h>
 
 StringData *int_to_string(int32_t x) {
-    char buf[32];
-    sprintf(buf, "%d", x);
-    return make_string(buf, strlen(buf));
+    int len = snprintf(NULL, 0, "%d", x);
+    char *buf = malloc(len + 1);
+    snprintf(buf, len + 1, "%d", x);
+    return make_string(buf, len);
 }
 
 StringData *make_string(const char *data, size_t len) {

@@ -9,7 +9,8 @@ fn main() {
     let y = utils:add(x, 10);
     // let z = multiply(x, y);
     fmt:println("Hello, World!");
-    fmt:println("Result:");
+    fmt:print("Result: ");
+    fmt:println_int(x);
 }
 
 fn helper() -> int {

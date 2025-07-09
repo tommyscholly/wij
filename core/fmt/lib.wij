@@ -1,6 +1,7 @@
 module fmt;
 
 foreign {
+    int_to_string: fn(num: int) -> String;
     write: fn(fd: int, data: *byte, count: int) -> int;
     read: fn(fd: int, data: *byte, count: int) -> int;
 }
@@ -15,4 +16,11 @@ pub fn print(msg: String) {
     let buff = msg.buffer;
     let len = msg.length;
     write(1, buff, len);
+}
+
+pub fn println_int(num: int) {
+    let msg = int_to_string(num);
+    let new_line = "\n";
+    write(1, msg.buffer, msg.length);
+    write(1, new_line.buffer, new_line.length);
 }
